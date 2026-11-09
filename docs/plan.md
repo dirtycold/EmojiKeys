@@ -1,0 +1,72 @@
+# EmojiKeys plan
+
+Use the emoji keys of the Logitech POP Keys on macOS and Linux with a small Python tool. Not affiliated with Logitech.
+
+## Decisions
+
+- Python stdlib for the library; ctypes for libhidapi and CoreGraphics. qtpy for the UI only.
+- One UI app owns the receiver. The HID++ listener runs in a thread inside it. Never a daemon.
+- Single instance: a PID file held with `fcntl.flock`. A second launch sends `SIGUSR1` to the running app, which shows its window (`signal.set_wakeup_fd` + `QSocketNotifier`), then exits. No QtNetwork.
+- JSON is the saved format only. At runtime the library and UI share dataclasses. Actions are resolved once; the runner swaps the key mapping in one assignment.
+- CLI is read-only: `list`, `probe`, `doctor`. Exception: `monitor`, a testing tool that diverts the mappable keys and prints presses until Ctrl-C.
+- No dependency on Solaar being installed: own udev rule and docs.
+- Never read keystrokes. The tool opens only the HID++ interface, which carries the reprogrammable controls, Fn and status, never typing. Any feature that would need to read typing is dropped. So modifier keys are not supported; mappings tell key from Fn+key only (Fn comes over HID++). macOS enforces this (no Input Monitoring permission); on Linux the udev rule grants only the HID++ hidraw nodes, to be tested on Linux.
+
+## Layout
+
+```
+emojikeys/
+  __main__.py      no args: UI app; list / probe / doctor: CLI
+  hidpp.py         Channel, Device, divert, listener thread
+  config.py        Action and Config dataclasses, JSON load/save
+  actions.py       resolve and run actions: text, keys, app, run
+  inject/macos.py  CoreGraphics: type text, key combos, Accessibility check
+  doctor.py        checks; --fix installs the udev rule, prompts Accessibility
+  ui.py            tray app, single instance
+```
+
+Files:
+
+| | macOS | Linux |
+|---|---|---|
+| Config | `~/Library/Application Support/EmojiKeys/config.json` | `$XDG_CONFIG_HOME/emojikeys/config.json` |
+| PID file | `$TMPDIR/emojikeys.pid` | `$XDG_RUNTIME_DIR/emojikeys.pid` |
+
+## Milestones
+
+| # | Module | Check |
+|---|---|---|
+| 1 | `hidpp.py` | `python3 -m emojikeys list` / `probe` match the prototype |
+| 2 | `config.py` | default config written and read back |
+| 3 | `inject/macos.py` | a one-liner types an emoji and sends ⌃⌘Space |
+| 4 | `actions.py` | one-liner per action type |
+| 5 | `doctor.py` | `python3 -m emojikeys doctor` reports deps and permissions |
+| 6 | `ui.py` | keys work end to end; second launch brings up the first; `monitor` refuses while the app runs (same PID-file lock) |
+
+Mappable keys: F4–F12, Dictation, Emoji 1–4, Emoji panel. Only mapped keys are diverted. F1–F3 are Easy-Switch and not divertable.
+
+On an F key only its task (media function) is diverted, whichever combo produces it under the current Fn-lock mode; the plain F key still reaches the system. Verified 2026-11-09 with F12: plain F12 reached the terminal, Fn+F12 arrived as a divert event (Fn 0x0034 held) and the volume didn't change.
+
+The UI shows each key's stock function (from its task ID, our own labels) and the Fn-lock state, so the user knows whether the media function is F-key or Fn+F-key. Fn-lock is feature 0x40A3 (index 11 on POP Keys): read fn0 at start (per host, current host from HOSTS_INFO 0x1815), and event 0 reports each toggle as [host, state, 01, 01] with state 01 = media keys without Fn. Seen 2026-11-09 while toggling with Fn+Esc.
+
+Default mapping: the four emoji keys type their emoji, the panel key sends ⌃⌘Space (emoji picker). Dictation and the F keys are unmapped, so they keep their normal function.
+
+## Requirements (to document in the README)
+
+| | macOS | Linux |
+|---|---|---|
+| hidapi | MacPorts `hidapi`, else Homebrew `hidapi` | system package (`libhidapi-hidraw0` / `hidapi`) |
+| Device access | none | udev rule: Logitech (`046d`) hidraw nodes of the HID++ interface only, plus `uinput`, `TAG+="uaccess"`. If Solaar's rule is installed it grants all Logitech hidraw nodes anyway; `doctor` says so |
+| Key injection | Accessibility for the app process | `/dev/uinput` via the rule |
+| UI | qtpy + a Qt binding | same, Flatpak preferred |
+
+`doctor --fix`: installs the udev rule with `pkexec` (prints the `sudo` command as fallback, print-only inside Flatpak), reloads udev, then asks to replug the receiver. Never loads kernel modules or installs packages; it prints those commands.
+
+## Later
+
+- Mapping editor in the UI.
+- OS mode: show and change the keyboard's OS mode (MULTIPLATFORM 0x4531), with a description of what it changes. On POP Keys the choices are Windows 0, macOS 1, iOS 2. fn0 byte 6 is the current mode, and fn3 `[0xFF, platform]` sets it for the current host; the keyboard shortcuts are Fn+P (Windows) and Fn+O (macOS) held about 3 s, and the F1 light flashes on a switch. The mode explains surprises: in Windows mode on a Mac, the task keys send Windows shortcuts (Fn+F4 Win+D gave ∂, Fn+F5 Win+Shift+S gave Í, Fn+F6 did nothing), and Command and Option/Control land differently. Media keys (F7-F12) work in any mode. Phase 1 assumes Windows mode, with keys assigned by hand. The mode is shared when one dongle is moved between machines with a hardware switch.
+- Linux backend `inject/linux.py` (uinput).
+- Bluetooth (vendor page 0xFF43).
+- `.app` bundle on macOS, so Accessibility is granted to the app alone.
+- Solaar: feature-request issue for a macOS KeyPress backend; HID++ diversion already works on macOS.
