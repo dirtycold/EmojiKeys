@@ -56,9 +56,31 @@ Default mapping: the four emoji keys type their emoji, the panel key sends ⌃�
 | | macOS | Linux |
 |---|---|---|
 | hidapi | MacPorts `hidapi`, else Homebrew `hidapi` | system package (`libhidapi-hidraw0` / `hidapi`) |
-| Device access | none | udev rule: Logitech (`046d`) hidraw nodes of the HID++ interface only, plus `uinput`, `TAG+="uaccess"`. If Solaar's rule is installed it grants all Logitech hidraw nodes anyway; `doctor` says so |
-| Key injection | Accessibility for the app process | `/dev/uinput` via the rule |
+| Device access | none | udev rule: Logitech (`046d`) hidraw nodes of the HID++ interface only, `TAG+="uaccess"` (a `uinput` line only if Linux input simulation is added). If Solaar's rule is installed it grants all Logitech hidraw nodes anyway; `doctor` says so |
+| Key injection | Accessibility for the app process | not supported yet (reserved) |
 | UI | qtpy + a Qt binding | same, Flatpak preferred |
+
+## Input injection
+
+macOS: typing text and key combos both post CoreGraphics events and need only Accessibility; nothing is deferred. The grant follows the process (the terminal while run from one; a `.app` bundle later). Secure input (password fields, Terminal's Secure Keyboard Entry) may block synthetic events by design. `doctor` uses `CGPreflightPostEventAccess` / `CGRequestPostEventAccess`.
+
+Linux: input simulation is not supported yet (reserved). `text` and `keys` actions report "not supported yet on Linux"; `app`, `run` and the user's own scripts cover the rest. `/dev/uinput` is one node and can't be scoped; write access lets any process of the user type into any app (injection, not reading). Options, to decide if it's ever added:
+
+| Way | Scope | Cost |
+|---|---|---|
+| `/dev/uinput` via udev `uaccess` | any process of the logged-in user | simple, works everywhere |
+| XTest | X11 sessions only | no permission, no Wayland |
+| RemoteDesktop portal + libei | per app, approved in a system dialog | KDE and GNOME on Wayland; D-Bus and libei, heaviest |
+
+Many Linux actions need no injection: they are `run` commands, e.g. `plasma-emojier` (KDE emoji picker), `gnome-characters`, `spectacle` (KDE screenshot).
+
+Linux without any permission granted:
+
+| Granted | What works |
+|---|---|
+| nothing | nothing: hidraw nodes are root-only, so the keyboard can't be opened (unless Solaar's rule is installed) |
+| HID++ hidraw rule only | diversion and all events (keys, Fn, Fn lock, OS mode); `app` and `run` actions; text as clipboard copy (Qt in the UI) for the user to paste; on X11 also text and combos via XTest |
+| plus `/dev/uinput` or the portal | text and key combos on Wayland too |
 
 `doctor --fix`: installs the udev rule with `pkexec` (prints the `sudo` command as fallback, print-only inside Flatpak), reloads udev, then asks to replug the receiver. Never loads kernel modules or installs packages; it prints those commands.
 
@@ -66,7 +88,7 @@ Default mapping: the four emoji keys type their emoji, the panel key sends ⌃�
 
 - Mapping editor in the UI.
 - OS mode: show and change the keyboard's OS mode (MULTIPLATFORM 0x4531), with a description of what it changes. On POP Keys the choices are Windows 0, macOS 1, iOS 2. fn0 byte 6 is the current mode, and fn3 `[0xFF, platform]` sets it for the current host; the keyboard shortcuts are Fn+P (Windows) and Fn+O (macOS) held about 3 s, and the F1 light flashes on a switch. The mode explains surprises: in Windows mode on a Mac, the task keys send Windows shortcuts (Fn+F4 Win+D gave ∂, Fn+F5 Win+Shift+S gave Í, Fn+F6 did nothing), and Command and Option/Control land differently. Media keys (F7-F12) work in any mode. Phase 1 assumes Windows mode, with keys assigned by hand. The mode is shared when one dongle is moved between machines with a hardware switch.
-- Linux backend `inject/linux.py` (uinput).
+- Linux input simulation, `inject/linux.py` (WIP, reserved: uinput, XTest or portal; see Input injection).
+- `copy` action: put text (e.g. an emoji) on the clipboard for the user to paste; no input simulation, so it fits Linux too.
 - Bluetooth (vendor page 0xFF43).
 - `.app` bundle on macOS, so Accessibility is granted to the app alone.
-- Solaar: feature-request issue for a macOS KeyPress backend; HID++ diversion already works on macOS.
