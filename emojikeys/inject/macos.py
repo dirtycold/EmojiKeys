@@ -4,11 +4,11 @@ import ctypes
 import functools
 
 # kCGHIDEventTap: post as if from the keyboard
-HID_EVENT_TAP = 0
+TAP = 0
 # CGEventKeyboardSetUnicodeString takes at most 20 UTF-16 units per event
-MAX_UNITS = 20
+CHUNK = 20
 
-FLAGS = {
+MODIFIERS = {
     "shift": 0x00020000,
     "ctrl": 0x00040000,
     "control": 0x00040000,
@@ -20,7 +20,7 @@ FLAGS = {
 }
 
 # virtual key codes; letters and symbols by US ANSI position
-KEYCODES = {
+KEYS = {
     **dict(zip("asdfhgzxcv", range(0x00, 0x0A))),
     **dict(zip("qweryt123465", range(0x0C, 0x18))),
     "b": 0x0B, "=": 0x18, "9": 0x19, "7": 0x1A, "-": 0x1B, "8": 0x1C, "0": 0x1D, "]": 0x1E, "o": 0x1F,
@@ -62,7 +62,7 @@ def _post(keycode, down, flags, units=None):
     cg.CGEventSetFlags(event, flags)
     if units:
         cg.CGEventKeyboardSetUnicodeString(event, len(units), (ctypes.c_uint16 * len(units))(*units))
-    cg.CGEventPost(HID_EVENT_TAP, event)
+    cg.CGEventPost(TAP, event)
     cf.CFRelease(event)
 
 
@@ -77,7 +77,7 @@ def write(text):
     chunk = []
     for ch in text:
         units = list(memoryview(ch.encode("utf-16-le")).cast("H"))
-        if len(chunk) + len(units) > MAX_UNITS:
+        if len(chunk) + len(units) > CHUNK:
             _post(0, True, 0, chunk)
             _post(0, False, 0, chunk)
             chunk = []
@@ -92,14 +92,14 @@ class Combo:
 
     def __init__(self, text):
         *mods, key = text.lower().split("+")
-        unknown = [m for m in mods if m not in FLAGS] + ([] if key in KEYCODES else [key])
+        unknown = [m for m in mods if m not in MODIFIERS] + ([] if key in KEYS else [key])
         if unknown:
             raise ValueError(f"unknown key name(s) in {text!r}: {', '.join(unknown)}")
         self.text = text
-        self.keycode = KEYCODES[key]
+        self.keycode = KEYS[key]
         self.flags = 0
         for m in mods:
-            self.flags |= FLAGS[m]
+            self.flags |= MODIFIERS[m]
 
     def press(self):
         _post(self.keycode, True, self.flags)

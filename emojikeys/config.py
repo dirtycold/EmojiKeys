@@ -43,7 +43,7 @@ class Config:
         """Return {name: (cid, fn)} of every mappable key, in keyboard order."""
         names = {}
         for cid in Reprog.MAPPABLE:
-            for fn in (True,) if cid in Reprog.F_CIDS else (False, True):
+            for fn in (True,) if cid in Reprog.FKEYS else (False, True):
                 names[("Fn+" if fn else "") + Reprog.NAMES[cid]] = (cid, fn)
         return names
 

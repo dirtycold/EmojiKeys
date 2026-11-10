@@ -83,7 +83,7 @@ class Keymap:
 
     def press(self, cid, fn):
         # F keys only ever report their task, so they are mapped as Fn+key whatever Fn shows
-        fire = self._actions.get((cid, fn or cid in Reprog.F_CIDS))
+        fire = self._actions.get((cid, fn or cid in Reprog.FKEYS))
         if fire is None:
             return
         try:

@@ -12,15 +12,8 @@ log = logging.getLogger(__name__)
 VID = 0x046D
 # vendor usage page of the HID++ interface
 USAGE_PAGE = 0xFF00
-SHORT_ID, LONG_ID = 0x10, 0x11
-SHORT_SIZE, LONG_SIZE = 7, 20
 # non-zero (0 = notification), as Solaar
 SW_ID = 0x0B
-# devices may answer >1 s late after being idle (Solaar base.py)
-DEVICE_TIMEOUT = 4.0
-RECEIVER_TIMEOUT = 1.0
-# devnum of the receiver itself, and of a directly attached device
-RECEIVER_DEVNUM = DIRECT_DEVNUM = 0xFF
 
 # bare names first (as Solaar), then MacPorts / Homebrew / /usr/local, which dyld doesn't search
 LIBRARIES = (
@@ -41,37 +34,57 @@ class Error(Exception):
         self.code = code
 
 
+class Report:
+    """HID++ report IDs and their sizes."""
+
+    SHORT, LONG = 0x10, 0x11
+    SIZES = {SHORT: 7, LONG: 20}
+
+
+class Timeout:
+    """Reply timeouts in seconds; devices may answer >1 s late after being idle (Solaar base.py)."""
+
+    DEVICE = 4.0
+    RECEIVER = 1.0
+
+
+class Devnum:
+    """Device numbers of the receiver itself and of a directly attached device."""
+
+    RECEIVER = DIRECT = 0xFF
+
+
 class Receiver:
     """HID++ 1.0 receiver registers, notifications and errors."""
 
-    SET_REGISTER = 0x80
-    GET_REGISTER = 0x81
+    SET = 0x80
+    GET = 0x81
     NOTIFICATIONS = 0x00
-    NOTIFY_WIRELESS = 0x000100
-    NOTIFY_SOFTWARE_PRESENT = 0x000800
+    WIRELESS = 0x000100
+    SOFTWARE = 0x000800
     # device connection notification; flags bit 0x40 = link not established
-    DJ_PAIRING = 0x41
+    PAIRING = 0x41
     # nothing paired in that slot
-    UNKNOWN_DEVICE = 0x09
+    UNKNOWN = 0x09
 
 
 class Feature:
     """HID++ 2.0 feature IDs."""
 
     ROOT = 0x0000
-    DEVICE_NAME = 0x0005
-    HOSTS_INFO = 0x1815
-    REPROG_V4 = 0x1B04
-    WIRELESS_STATUS = 0x1D4B
-    # Fn-swap (Solaar K375S_FN_INVERSION); per host, event 0 = [host, state, ...]
-    FN_SWAP = 0x40A3
-    MULTIPLATFORM = 0x4531
+    NAME = 0x0005
+    HOSTS = 0x1815
+    REPROG = 0x1B04
+    WIRELESS = 0x1D4B
+    # Fn lock (Solaar K375S_FN_INVERSION); per host, event 0 = [host, state, ...]
+    FN_LOCK = 0x40A3
+    PLATFORM = 0x4531
 
 
 class Platform:
-    """MULTIPLATFORM (0x4531): OS bits of a platform descriptor."""
+    """PLATFORM (0x4531): OS bits of a platform descriptor."""
 
-    OS_BITS = (
+    OS = (
         (0x0100, "Windows"),
         (0x0200, "Windows Embedded"),
         (0x0400, "Linux"),
@@ -88,19 +101,19 @@ class Wireless:
     """WIRELESS_DEVICE_STATUS (0x1D4B)."""
 
     EVENT = 0x00
-    RECONNECTION = 0x01
+    RECONNECT = 0x01
 
 
 class Reprog:
     """REPROG_CONTROLS_V4 (0x1B04)."""
 
     GET_COUNT, GET_INFO, GET_REPORTING, SET_REPORTING = range(4)
-    DIVERTED_BUTTONS = 0x00
+    DIVERTED = 0x00
     FN = 0x0034
-    EMOJI_CIDS = (0x0103, 0x0104, 0x0105, 0x0106, 0x0107, 0x0108)
+    EMOJI = (0x0103, 0x0104, 0x0105, 0x0106, 0x0107, 0x0108)
     # F4-F12: only their task (media function) is diverted; F1-F3 (Easy-Switch) can't be
-    F_CIDS = (0x006E, 0x010A, 0x011C, 0x00E4, 0x00E5, 0x00E6, 0x00E7, 0x00E8, 0x00E9)
-    MAPPABLE = F_CIDS + EMOJI_CIDS
+    FKEYS = (0x006E, 0x010A, 0x011C, 0x00E4, 0x00E5, 0x00E6, 0x00E7, 0x00E8, 0x00E9)
+    MAPPABLE = FKEYS + EMOJI
     # emoji numbering matches the keyboard (checked 2026-11-09); F-key order follows the task IDs (unconfirmed)
     NAMES = {
         0x00D1: "F1",
@@ -188,8 +201,8 @@ def library():
             ("hid_close", [c.c_void_p], None),
             ("hid_error", [c.c_void_p], c.c_wchar_p),
         ):
-            getattr(lib, fn).argtypes = args
-            getattr(lib, fn).restype = res
+            f = getattr(lib, fn)
+            f.argtypes, f.restype = args, res
         # macOS: don't take the device away from the OS
         if hasattr(lib, "hid_darwin_set_open_exclusive"):
             lib.hid_darwin_set_open_exclusive.argtypes = [c.c_int]
@@ -203,7 +216,6 @@ class Channel:
     """One open HID++ interface: a receiver or a directly attached device."""
 
     def __init__(self, path, product=""):
-        self.path = path
         self.product = product
         # unsolicited reports read while waiting for a reply
         self._pending = collections.deque(maxlen=64)
@@ -236,21 +248,12 @@ class Channel:
 
     @property
     def devnums(self):
-        return range(1, 7) if "receiver" in self.product.lower() else (DIRECT_DEVNUM,)
+        return range(1, 7) if "receiver" in self.product.lower() else (Devnum.DIRECT,)
 
     def close(self):
         if self._handle:
             self._lib.hid_close(self._handle)
             self._handle = None
-
-    def write(self, devnum, data):
-        if len(data) <= SHORT_SIZE - 2:
-            buf = bytes([SHORT_ID, devnum]) + data.ljust(SHORT_SIZE - 2, b"\0")
-        else:
-            buf = bytes([LONG_ID, devnum]) + data.ljust(LONG_SIZE - 2, b"\0")
-        log.debug(">> %s", buf.hex(" "))
-        if self._lib.hid_write(self._handle, buf, len(buf)) < 0:
-            raise OSError(f"hid_write: {self._lib.hid_error(self._handle)}")
 
     def read(self, timeout_ms):
         buf = ctypes.create_string_buffer(64)
@@ -261,20 +264,25 @@ class Channel:
             log.debug("<< %s", buf.raw[:n].hex(" "))
         return buf.raw[:n]
 
-    def next_report(self, timeout_ms):
+    def report(self, timeout_ms):
         """Next unsolicited report: one set aside during a request first, else a fresh read."""
         return self._pending.popleft() if self._pending else self.read(timeout_ms)
 
-    def exchange(self, devnum, b2, b3, params=b"", timeout=DEVICE_TIMEOUT):
+    def request(self, devnum, b2, b3, params=b"", timeout=Timeout.DEVICE):
         """Send [devnum, b2, b3, params] and return the reply bytes after b3.
 
         b2/b3 are feature index / function+sw_id (HID++ 2.0) or sub_id / register (HID++ 1.0).
         """
-        self.write(devnum, bytes([b2, b3]) + params)
+        data = bytes([b2, b3]) + params
+        rid = Report.SHORT if len(data) <= Report.SIZES[Report.SHORT] - 2 else Report.LONG
+        buf = bytes([rid, devnum]) + data.ljust(Report.SIZES[rid] - 2, b"\0")
+        log.debug(">> %s", buf.hex(" "))
+        if self._lib.hid_write(self._handle, buf, len(buf)) < 0:
+            raise OSError(f"hid_write: {self._lib.hid_error(self._handle)}")
         deadline = time.monotonic() + timeout
         while (left := deadline - time.monotonic()) > 0:
             r = self.read(int(left * 1000) + 1)
-            if len(r) >= 6 and r[0] in (SHORT_ID, LONG_ID) and r[1] == devnum:
+            if len(r) >= 6 and r[0] in (Report.SHORT, Report.LONG) and r[1] == devnum:
                 if r[2] == b2 and r[3] == b3:
                     return r[4:]
                 if r[2] in (0x8F, 0xFF) and r[3] == b2 and r[4] == b3:
@@ -284,19 +292,19 @@ class Channel:
                 self._pending.append(r)
         raise TimeoutError(f"no reply from device {devnum:#04x}")
 
-    def get_register(self, reg):
-        value = self.exchange(RECEIVER_DEVNUM, Receiver.GET_REGISTER, reg, timeout=RECEIVER_TIMEOUT)
-        return int.from_bytes(value[:3], "big")
-
-    def set_register(self, reg, value):
-        self.exchange(RECEIVER_DEVNUM, Receiver.SET_REGISTER, reg, value.to_bytes(3, "big"), RECEIVER_TIMEOUT)
+    def register(self, reg, value=None):
+        """Read a receiver register, or write it when value is given."""
+        if value is None:
+            data = self.request(Devnum.RECEIVER, Receiver.GET, reg, timeout=Timeout.RECEIVER)
+            return int.from_bytes(data[:3], "big")
+        self.request(Devnum.RECEIVER, Receiver.SET, reg, value.to_bytes(3, "big"), Timeout.RECEIVER)
 
 
 class Device:
     """A HID++ 2.0 device reachable through a Channel."""
 
     # link-up (0x41) and reconnection (0x1D4B) arrive together; divert once
-    REDIVERT_DEBOUNCE = 2.0
+    DEBOUNCE = 2.0
 
     def __init__(self, channel, devnum):
         self.channel = channel
@@ -305,10 +313,10 @@ class Device:
 
     def ping(self):
         """Return the HID++ protocol version (major, minor)."""
-        data = self.channel.exchange(self.devnum, 0x00, 0x10 | SW_ID, b"\0\0\x5a")
+        data = self.channel.request(self.devnum, 0x00, 0x10 | SW_ID, b"\0\0\x5a")
         return data[0], data[1]
 
-    def feature_index(self, feature):
+    def index(self, feature):
         """Return the feature's index, or None when unsupported."""
         if feature not in self._features:
             data = self.call(Feature.ROOT, 0x0, struct.pack("!H", feature))
@@ -316,73 +324,71 @@ class Device:
         return self._features[feature]
 
     def call(self, feature, func, params=b""):
-        idx = self.feature_index(feature)
+        idx = self.index(feature)
         if idx is None:
             raise Error(f"feature {feature:#06x} not supported")
-        return self.channel.exchange(self.devnum, idx, (func << 4) | SW_ID, params)
+        return self.channel.request(self.devnum, idx, (func << 4) | SW_ID, params)
 
     def name(self):
-        count = self.call(Feature.DEVICE_NAME, 0x0)[0]
+        count = self.call(Feature.NAME, 0x0)[0]
         name = b""
         while len(name) < count:
-            chunk = self.call(Feature.DEVICE_NAME, 0x1, bytes([len(name)])).rstrip(b"\0")
+            chunk = self.call(Feature.NAME, 0x1, bytes([len(name)])).rstrip(b"\0")
             if not chunk:
                 break
             name += chunk[: count - len(name)]
         return name.decode(errors="replace")
 
-    def set_divert(self, cids, on):
+    def divert(self, cids, on=True):
         """setCidReporting: divert bit plus its valid bit (0x02), no remap."""
         for cid in cids:
-            self.call(Feature.REPROG_V4, Reprog.SET_REPORTING, struct.pack("!HBH", cid, 0x03 if on else 0x02, 0))
+            self.call(Feature.REPROG, Reprog.SET_REPORTING, struct.pack("!HBH", cid, 0x03 if on else 0x02, 0))
 
-    def fn_swap(self):
+    def fn_lock(self):
         """Return True when the F keys give their media function without Fn, or None if unsupported."""
-        if self.feature_index(Feature.FN_SWAP) is None:
+        if self.index(Feature.FN_LOCK) is None:
             return None
-        host = self.call(Feature.HOSTS_INFO, 0x0)[3] if self.feature_index(Feature.HOSTS_INFO) is not None else 0
-        return bool(self.call(Feature.FN_SWAP, 0x0, bytes([host]))[1])
+        host = self.call(Feature.HOSTS, 0x0)[3] if self.index(Feature.HOSTS) is not None else 0
+        return bool(self.call(Feature.FN_LOCK, 0x0, bytes([host]))[1])
 
-    def os_mode(self):
+    def platform(self):
         """Return the name of the keyboard's current OS mode, or None if unsupported."""
-        if self.feature_index(Feature.MULTIPLATFORM) is None:
+        if self.index(Feature.PLATFORM) is None:
             return None
-        info = self.call(Feature.MULTIPLATFORM, 0x0)
+        info = self.call(Feature.PLATFORM, 0x0)
         current = info[6]
         for i in range(info[2]):
-            platform, _, os_flags = struct.unpack("!BBH", self.call(Feature.MULTIPLATFORM, 0x1, bytes([i]))[:4])
-            if platform == current:
-                return ", ".join(name for bit, name in Platform.OS_BITS if os_flags & bit) or f"platform {current}"
+            index, _, os_flags = struct.unpack("!BBH", self.call(Feature.PLATFORM, 0x1, bytes([i]))[:4])
+            if index == current:
+                return ", ".join(name for bit, name in Platform.OS if os_flags & bit) or f"platform {current}"
         return f"platform {current}"
 
-    def listen(self, cids, on_key, stop, on_fn_swap=None):
+    def listen(self, cids, on_key, stop, on_fn_lock=None):
         """Divert cids and call on_key(cid, pressed, fn) until the stop Event is set.
 
-        fn tells whether Fn was held. on_fn_swap(state) is called when the user toggles Fn-swap.
+        fn tells whether Fn was held. on_fn_lock(state) is called when the user toggles Fn lock.
         Blocking; run it in a thread. Re-diverts after a reconnect and undoes the divert on exit.
         """
         ch = self.channel
-        reprog = self.feature_index(Feature.REPROG_V4)
-        wireless = self.feature_index(Feature.WIRELESS_STATUS)
-        fn_swap = self.feature_index(Feature.FN_SWAP)
+        reprog = self.index(Feature.REPROG)
+        wireless = self.index(Feature.WIRELESS)
+        lock = self.index(Feature.FN_LOCK)
         flags = None
-        if self.devnum != DIRECT_DEVNUM:
+        if self.devnum != Devnum.DIRECT:
             # have the receiver report link up/down (0x41), as Solaar does
-            flags = ch.get_register(Receiver.NOTIFICATIONS)
-            ch.set_register(
-                Receiver.NOTIFICATIONS, flags | Receiver.NOTIFY_WIRELESS | Receiver.NOTIFY_SOFTWARE_PRESENT
-            )
-        self.set_divert(cids, True)
+            flags = ch.register(Receiver.NOTIFICATIONS)
+            ch.register(Receiver.NOTIFICATIONS, flags | Receiver.WIRELESS | Receiver.SOFTWARE)
+        self.divert(cids)
         log.info("diverted %s", ", ".join(Reprog.NAMES.get(c, f"{c:#06x}") for c in cids))
         diverted = time.monotonic()
         down = ()
         fn_held = False
         try:
             while not stop.is_set():
-                r = ch.next_report(500)
-                if len(r) < 7 or r[0] not in (SHORT_ID, LONG_ID) or r[1] != self.devnum:
+                r = ch.report(500)
+                if len(r) < 7 or r[0] not in (Report.SHORT, Report.LONG) or r[1] != self.devnum:
                     continue
-                if r[2] == reprog and r[3] == Reprog.DIVERTED_BUTTONS:
+                if r[2] == reprog and r[3] == Reprog.DIVERTED:
                     held = struct.unpack("!4H", r[4:12])
                     fn = Reprog.FN in held
                     if fn != fn_held:
@@ -397,14 +403,14 @@ class Device:
                             on_key(cid, False, fn)
                     down = now
                     continue
-                if r[2] == fn_swap and r[3] == 0x00:
-                    if on_fn_swap:
-                        on_fn_swap(bool(r[5]))
+                if r[2] == lock and r[3] == 0x00:
+                    if on_fn_lock:
+                        on_fn_lock(bool(r[5]))
                     continue
                 if r[2] == wireless and r[3] == Wireless.EVENT:
-                    up = r[4] == Wireless.RECONNECTION
+                    up = r[4] == Wireless.RECONNECT
                     log.info("wireless status %#04x%s", r[4], " (reconnected)" if up else "")
-                elif r[2] == Receiver.DJ_PAIRING:
+                elif r[2] == Receiver.PAIRING:
                     up = not r[4] & 0x40
                     log.info("link %s", "up" if up else "down")
                 else:
@@ -412,10 +418,10 @@ class Device:
                 if not up:
                     continue
                 down = ()
-                if time.monotonic() - diverted > self.REDIVERT_DEBOUNCE:
+                if time.monotonic() - diverted > self.DEBOUNCE:
                     for attempt in range(1, 4):
                         try:
-                            self.set_divert(cids, True)
+                            self.divert(cids)
                             log.info("re-diverted")
                             break
                         except (Error, TimeoutError) as e:
@@ -424,12 +430,12 @@ class Device:
                     diverted = time.monotonic()
         finally:
             try:
-                self.set_divert(cids, False)
+                self.divert(cids, False)
                 log.info("divert removed")
             except (Error, TimeoutError) as e:
                 log.warning("could not undo the divert (%s); power-cycling the device resets it", e)
             if flags is not None:
-                ch.set_register(Receiver.NOTIFICATIONS, flags)
+                ch.register(Receiver.NOTIFICATIONS, flags)
                 log.info("receiver notification flags restored")
 
 

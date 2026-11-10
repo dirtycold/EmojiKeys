@@ -31,9 +31,9 @@ class Command:
                         major, minor = dev.ping()
                         print(f"  #{devnum:<3} HID++ {major}.{minor}  {dev.name()}")
                     except TimeoutError:
-                        print(f"  #{devnum:<3} no reply within {hidpp.DEVICE_TIMEOUT:g}s (off or out of range?)")
+                        print(f"  #{devnum:<3} no reply within {hidpp.Timeout.DEVICE:g}s (off or out of range?)")
                     except hidpp.Error as e:
-                        if e.code != hidpp.Receiver.UNKNOWN_DEVICE or self.args.verbose:
+                        if e.code != hidpp.Receiver.UNKNOWN or self.args.verbose:
                             print(f"  #{devnum:<3} {e}")
         print(f"hidapi: {hidpp.library()._name}")
 
@@ -46,16 +46,16 @@ class Command:
             sys.exit(f"no reachable device matching {self.args.match!r} (tap a key to wake it, then retry)")
         ch, dev, name = found
         with ch:
-            idx = dev.feature_index(hidpp.Feature.REPROG_V4)
+            idx = dev.index(hidpp.Feature.REPROG)
             if idx is None:
                 sys.exit(f"{name}: REPROG_CONTROLS_V4 not supported")
-            count = dev.call(hidpp.Feature.REPROG_V4, hidpp.Reprog.GET_COUNT)[0]
+            count = dev.call(hidpp.Feature.REPROG, hidpp.Reprog.GET_COUNT)[0]
             print(f"#{dev.devnum} {name}: REPROG_CONTROLS_V4 at feature index {idx}, {count} controls\n")
             rows = []
             for i in range(count):
-                info = dev.call(hidpp.Feature.REPROG_V4, hidpp.Reprog.GET_INFO, bytes([i]))
+                info = dev.call(hidpp.Feature.REPROG, hidpp.Reprog.GET_INFO, bytes([i]))
                 cid, tid, f1, _pos, group, gmask, f2 = struct.unpack("!HHBBBBB", info[:9])
-                rep = dev.call(hidpp.Feature.REPROG_V4, hidpp.Reprog.GET_REPORTING, struct.pack("!H", cid))
+                rep = dev.call(hidpp.Feature.REPROG, hidpp.Reprog.GET_REPORTING, struct.pack("!H", cid))
                 _cid, m1, remap, m2 = struct.unpack("!HBHB", rep[:6])
                 rows.append((
                     f"{i:2} {cid:#06x} {tid:#06x} {group:3} {gmask:#04x}  {remap:#06x}",
@@ -79,13 +79,15 @@ class Command:
             sys.exit(f"no reachable device matching {self.args.match!r} (tap a key to wake it, then retry)")
         ch, dev, name = found
         print(f"#{dev.devnum} {name}: diverting all mappable keys; press keys, Ctrl-C to stop")
+        # Fn lock state -> where the media functions are
+        media = {True: "F-key alone", False: "Fn+F-key"}
         with ch:
-            mode = dev.os_mode()
+            mode = dev.platform()
             if mode is not None:
                 print(f"OS mode: {mode}")
-            swap = dev.fn_swap()
-            if swap is not None:
-                print(f"Fn lock: media keys on {'F-key alone' if swap else 'Fn+F-key'}")
+            lock = dev.fn_lock()
+            if lock is not None:
+                print(f"Fn lock: media keys on {media[lock]}")
             dev.listen(
                 hidpp.Reprog.MAPPABLE,
                 lambda cid, pressed, fn: print(
@@ -93,9 +95,7 @@ class Command:
                     f"{'Fn+' if fn else ''}{hidpp.Reprog.NAMES[cid]}"
                 ),
                 threading.Event(),
-                lambda state: print(
-                    f"{time.strftime('%H:%M:%S')} Fn lock: media keys on {'F-key alone' if state else 'Fn+F-key'}"
-                ),
+                lambda state: print(f"{time.strftime('%H:%M:%S')} Fn lock: media keys on {media[state]}"),
             )
 
 
