@@ -203,11 +203,11 @@ def library():
         ):
             f = getattr(lib, fn)
             f.argtypes, f.restype = args, res
-        # macOS: don't take the device away from the OS
+        lib.hid_init()
+        # macOS: don't take the device away from the OS; after hid_init, which resets it to exclusive
         if hasattr(lib, "hid_darwin_set_open_exclusive"):
             lib.hid_darwin_set_open_exclusive.argtypes = [c.c_int]
             lib.hid_darwin_set_open_exclusive(0)
-        lib.hid_init()
         return lib
     raise OSError("cannot load libhidapi, tried: " + ", ".join(LIBRARIES))
 
