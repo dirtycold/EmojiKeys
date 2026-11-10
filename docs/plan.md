@@ -19,7 +19,7 @@ emojikeys/
   __main__.py      no args: UI app; list / probe / doctor: CLI
   hidpp.py         Channel, Device, divert, listener thread
   config.py        Action and Config dataclasses, JSON load/save
-  actions.py       resolve and run actions: text, keys, app, run
+  actions.py       prepare and fire actions: type, run (Keymap)
   inject/macos.py  CoreGraphics: type text, key combos, Accessibility check
   doctor.py        checks; --fix installs the udev rule, prompts Accessibility
   ui.py            tray app, single instance
@@ -45,11 +45,15 @@ Files:
 
 Mappable keys: F4–F12, Dictation, Emoji 1–4, Emoji panel. Only mapped keys are diverted. F1–F3 are Easy-Switch and not divertable.
 
+Config keys: `Emoji 1` and `Fn+Emoji 1` (likewise Dictation, Emoji panel) are separate mappings. F keys are named `Fn+F4` … `Fn+F12` only and fire whatever Fn shows, since only their task is ever reported.
+
+Actions: `type` types text, with `{combo}` for keys (`{ctrl+cmd+space}`, `hi{return}`; `{{` and `}}` are literal braces). `run` runs a shell command without waiting; apps are `open -a "Name"`, which the UI offers through an app picker. Actions fire on press; release is ignored.
+
 On an F key only its task (media function) is diverted, whichever combo produces it under the current Fn-lock mode; the plain F key still reaches the system. Verified 2026-11-09 with F12: plain F12 reached the terminal, Fn+F12 arrived as a divert event (Fn 0x0034 held) and the volume didn't change.
 
 The UI shows each key's stock function (from its task ID, our own labels) and the Fn-lock state, so the user knows whether the media function is F-key or Fn+F-key. Fn-lock is feature 0x40A3 (index 11 on POP Keys): read fn0 at start (per host, current host from HOSTS_INFO 0x1815), and event 0 reports each toggle as [host, state, 01, 01] with state 01 = media keys without Fn. Seen 2026-11-09 while toggling with Fn+Esc.
 
-Default mapping: the four emoji keys type their emoji, the panel key sends ⌃⌘Space (emoji picker). Dictation and the F keys are unmapped, so they keep their normal function.
+Default mapping: the four emoji keys type their emoji, the panel key sends ⌃⌘Space (emoji picker), Dictation opens Screenshot.app. The F keys are unmapped, so they keep their normal function.
 
 ## Requirements (to document in the README)
 
@@ -89,6 +93,7 @@ Linux without any permission granted:
 - Mapping editor in the UI.
 - OS mode: show and change the keyboard's OS mode (MULTIPLATFORM 0x4531), with a description of what it changes. On POP Keys the choices are Windows 0, macOS 1, iOS 2. fn0 byte 6 is the current mode, and fn3 `[0xFF, platform]` sets it for the current host; the keyboard shortcuts are Fn+P (Windows) and Fn+O (macOS) held about 3 s, and the F1 light flashes on a switch. The mode explains surprises: in Windows mode on a Mac, the task keys send Windows shortcuts (Fn+F4 Win+D gave ∂, Fn+F5 Win+Shift+S gave Í, Fn+F6 did nothing), and Command and Option/Control land differently. Media keys (F7-F12) work in any mode. Phase 1 assumes Windows mode, with keys assigned by hand. The mode is shared when one dongle is moved between machines with a hardware switch.
 - Linux input simulation, `inject/linux.py` (WIP, reserved: uinput, XTest or portal; see Input injection).
+- Key repeat: the keyboard reports only press and release for diverted keys (no repeats; Solaar's Backspace mapping didn't repeat either). An opt-in `repeat` for `type` actions would run our own timer while the key is held, using macOS's repeat delay and rate. Never for `run`, which would launch many times.
 - `copy` action: put text (e.g. an emoji) on the clipboard for the user to paste; no input simulation, so it fits Linux too.
-- Bluetooth (vendor page 0xFF43).
+- Bluetooth (vendor page 0xFF43, devnum 0xFF). macOS: the POP Keys shows the 0xFF43 interface, but opening it failed (2026-11-10); likely needs Input Monitoring because typing shares the device, which conflicts with "never read keystrokes". To test by granting it briefly. Linux: cover BlueZ too (hidraw over bus 0005; the udev rule must match Bluetooth nodes, e.g. `KERNELS=="0005:046D:*"`).
 - `.app` bundle on macOS, so Accessibility is granted to the app alone.

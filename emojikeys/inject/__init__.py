@@ -2,7 +2,9 @@
 
 import sys
 
-if sys.platform == "darwin":
+SUPPORTED = sys.platform == "darwin"
+
+if SUPPORTED:
     from .macos import Combo, trusted, write
 else:
 
@@ -17,4 +19,4 @@ else:
         raise NotImplementedError("input simulation is not supported yet on Linux")
 
 
-__all__ = ["Combo", "trusted", "write"]
+__all__ = ["SUPPORTED", "Combo", "trusted", "write"]
