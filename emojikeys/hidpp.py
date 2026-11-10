@@ -219,6 +219,8 @@ class Channel:
         self.product = product
         # unsolicited reports read while waiting for a reply
         self._pending = collections.deque(maxlen=64)
+        # one read buffer for the channel's lifetime
+        self._buf = ctypes.create_string_buffer(64)
         self._lib = library()
         self._handle = self._lib.hid_open_path(path)
         if not self._handle:
@@ -256,13 +258,14 @@ class Channel:
             self._handle = None
 
     def read(self, timeout_ms):
-        buf = ctypes.create_string_buffer(64)
-        n = self._lib.hid_read_timeout(self._handle, buf, 64, timeout_ms)
+        n = self._lib.hid_read_timeout(self._handle, self._buf, len(self._buf), timeout_ms)
         if n < 0:
             raise OSError(f"hid_read: {self._lib.hid_error(self._handle)}")
+        # one copy of the n bytes read, so the buffer can be reused
+        data = ctypes.string_at(self._buf, n)
         if n:
-            log.debug("<< %s", buf.raw[:n].hex(" "))
-        return buf.raw[:n]
+            log.debug("<< %s", data.hex(" "))
+        return data
 
     def report(self, timeout_ms):
         """Next unsolicited report: one set aside during a request first, else a fresh read."""
@@ -389,7 +392,7 @@ class Device:
                 if len(r) < 7 or r[0] not in (Report.SHORT, Report.LONG) or r[1] != self.devnum:
                     continue
                 if r[2] == reprog and r[3] == Reprog.DIVERTED:
-                    held = struct.unpack("!4H", r[4:12])
+                    held = struct.unpack_from("!4H", r, 4)
                     fn = Reprog.FN in held
                     if fn != fn_held:
                         log.info("Fn %s", "down" if fn else "up")
