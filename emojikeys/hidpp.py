@@ -258,13 +258,16 @@ class Channel:
             self._handle = None
 
     def read(self, timeout_ms):
+        """Return the next HID++ report, or b"" on timeout or when a non-HID++ report was dropped."""
         n = self._lib.hid_read_timeout(self._handle, self._buf, len(self._buf), timeout_ms)
         if n < 0:
             raise OSError(f"hid_read: {self._lib.hid_error(self._handle)}")
+        # never read keystrokes: anything but HID++ (e.g. typing over Bluetooth) is dropped here, before logging or queueing
+        if n == 0 or self._buf[0][0] not in Report.SIZES:
+            return b""
         # one copy of the n bytes read, so the buffer can be reused
         data = ctypes.string_at(self._buf, n)
-        if n:
-            log.debug("<< %s", data.hex(" "))
+        log.debug("<< %s", data.hex(" "))
         return data
 
     def report(self, timeout_ms):
