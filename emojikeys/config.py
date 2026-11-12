@@ -41,11 +41,11 @@ class Config:
 
     @staticmethod
     def names():
-        """Return {name: (cid, fn)} of every mappable key, in keyboard order."""
+        """Return {name: (control_id, fn)} of every mappable key, in keyboard order."""
         names = {}
-        for cid in Reprog.MAPPABLE:
-            for fn in (True,) if cid in Reprog.FKEYS else (False, True):
-                names[("Fn+" if fn else "") + Reprog.NAMES[cid]] = (cid, fn)
+        for control_id in Reprog.MAPPABLE:
+            for fn in (True,) if control_id in Reprog.FKEYS else (False, True):
+                names[("Fn+" if fn else "") + Reprog.NAMES[control_id]] = (control_id, fn)
         return names
 
     @classmethod
@@ -62,13 +62,13 @@ class Config:
             keys[(0x0103, False)] = Action("run", "open -a Screenshot")
             return cls(keys)
         # emoji picker and screenshot tool: the first one installed (KDE, then GNOME), else unmapped
-        for cid, commands in (
+        for control_id, commands in (
             (0x0108, ("plasma-emojier", "gnome-characters")),
             (0x0103, ("spectacle", "gnome-screenshot --interactive")),
         ):
             command = next((c for c in commands if shutil.which(c.split()[0])), None)
             if command:
-                keys[(cid, False)] = Action("run", command)
+                keys[(control_id, False)] = Action("run", command)
         return cls(keys)
 
     @classmethod

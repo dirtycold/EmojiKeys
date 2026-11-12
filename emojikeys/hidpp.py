@@ -164,11 +164,11 @@ class Reprog:
     )
 
 
-class _DeviceInfo(ctypes.Structure):
+class DeviceInfo(ctypes.Structure):
     pass
 
 
-_DeviceInfo._fields_ = [
+DeviceInfo._fields_ = [
     ("path", ctypes.c_char_p),
     ("vendor_id", ctypes.c_ushort),
     ("product_id", ctypes.c_ushort),
@@ -179,7 +179,7 @@ _DeviceInfo._fields_ = [
     ("usage_page", ctypes.c_ushort),
     ("usage", ctypes.c_ushort),
     ("interface_number", ctypes.c_int),
-    ("next", ctypes.POINTER(_DeviceInfo)),
+    ("next", ctypes.POINTER(DeviceInfo)),
     ("bus_type", ctypes.c_int),
 ]
 
@@ -195,8 +195,8 @@ def library():
             continue
         for fn, args, res in (
             ("hid_init", [], c.c_int),
-            ("hid_enumerate", [c.c_ushort, c.c_ushort], c.POINTER(_DeviceInfo)),
-            ("hid_free_enumeration", [c.POINTER(_DeviceInfo)], None),
+            ("hid_enumerate", [c.c_ushort, c.c_ushort], c.POINTER(DeviceInfo)),
+            ("hid_free_enumeration", [c.POINTER(DeviceInfo)], None),
             ("hid_open_path", [c.c_char_p], c.c_void_p),
             ("hid_write", [c.c_void_p, c.c_char_p, c.c_size_t], c.c_int),
             ("hid_read_timeout", [c.c_void_p, c.c_char_p, c.c_size_t, c.c_int], c.c_int),
@@ -205,6 +205,8 @@ def library():
         ):
             f = getattr(lib, fn)
             f.argtypes, f.restype = args, res
+        # the name it loaded under, for list and doctor
+        lib.name = name
         lib.hid_init()
         # macOS: don't take the device away from the OS; after hid_init, which resets it to exclusive
         if hasattr(lib, "hid_darwin_set_open_exclusive"):
@@ -221,12 +223,12 @@ class Channel:
         self.path = path.decode()
         self.product = product
         # unsolicited reports read while waiting for a reply
-        self._pending = collections.deque(maxlen=64)
+        self.pending = collections.deque(maxlen=64)
         # one read buffer for the channel's lifetime
-        self._buf = ctypes.create_string_buffer(64)
-        self._lib = library()
-        self._handle = self._lib.hid_open_path(path)
-        if not self._handle:
+        self.buf = ctypes.create_string_buffer(64)
+        self.lib = library()
+        self.handle = self.lib.hid_open_path(path)
+        if not self.handle:
             raise OSError(f"cannot open {self.path}")
 
     def __enter__(self):
@@ -269,26 +271,26 @@ class Channel:
         return range(1, 7) if "receiver" in self.product.lower() else (Devnum.DIRECT,)
 
     def close(self):
-        if self._handle:
-            self._lib.hid_close(self._handle)
-            self._handle = None
+        if self.handle:
+            self.lib.hid_close(self.handle)
+            self.handle = None
 
     def read(self, timeout_ms):
         """Return the next HID++ report, or b"" on timeout or when a non-HID++ report was dropped."""
-        n = self._lib.hid_read_timeout(self._handle, self._buf, len(self._buf), timeout_ms)
+        n = self.lib.hid_read_timeout(self.handle, self.buf, len(self.buf), timeout_ms)
         if n < 0:
-            raise OSError(f"hid_read {self.path}: {self._lib.hid_error(self._handle)}")
+            raise OSError(f"hid_read {self.path}: {self.lib.hid_error(self.handle)}")
         # never read keystrokes: anything but HID++ (e.g. typing over Bluetooth) is dropped here, before logging or queueing
-        if n == 0 or self._buf[0][0] not in Report.SIZES:
+        if n == 0 or self.buf[0][0] not in Report.SIZES:
             return b""
         # one copy of the n bytes read, so the buffer can be reused
-        data = ctypes.string_at(self._buf, n)
+        data = ctypes.string_at(self.buf, n)
         log.debug("<< %s", data.hex(" "))
         return data
 
     def report(self, timeout_ms):
         """Next unsolicited report: one set aside during a request first, else a fresh read."""
-        return self._pending.popleft() if self._pending else self.read(timeout_ms)
+        return self.pending.popleft() if self.pending else self.read(timeout_ms)
 
     def request(self, devnum, b2, b3, params=b"", timeout=Timeout.DEVICE):
         """Send [devnum, b2, b3, params] and return the reply bytes after b3.
@@ -299,12 +301,12 @@ class Channel:
         rid = Report.SHORT if len(data) <= Report.SIZES[Report.SHORT] - 2 else Report.LONG
         buf = bytes([rid, devnum]) + data.ljust(Report.SIZES[rid] - 2, b"\0")
         log.debug(">> %s", buf.hex(" "))
-        if self._lib.hid_write(self._handle, buf, len(buf)) < 0:
+        if self.lib.hid_write(self.handle, buf, len(buf)) < 0:
             # a USB receiver may stall a write once (Linux: "Broken pipe", seen 2026-11-12); retry once
-            log.warning("hid_write %s: %s; retrying", self.path, self._lib.hid_error(self._handle))
+            log.warning("hid_write %s: %s; retrying", self.path, self.lib.hid_error(self.handle))
             time.sleep(0.1)
-            if self._lib.hid_write(self._handle, buf, len(buf)) < 0:
-                raise OSError(f"hid_write {self.path}: {self._lib.hid_error(self._handle)}")
+            if self.lib.hid_write(self.handle, buf, len(buf)) < 0:
+                raise OSError(f"hid_write {self.path}: {self.lib.hid_error(self.handle)}")
         deadline = time.monotonic() + timeout
         while (left := deadline - time.monotonic()) > 0:
             r = self.read(int(left * 1000) + 1)
@@ -315,7 +317,7 @@ class Channel:
                     hidpp10 = r[2] == 0x8F
                     raise Error(f"HID++ {'1.0' if hidpp10 else '2.0'} error {r[5]:#04x}", r[5] if hidpp10 else None)
             if r:
-                self._pending.append(r)
+                self.pending.append(r)
         raise TimeoutError(f"no reply from device {devnum:#04x}")
 
     def register(self, reg, value=None):
@@ -335,7 +337,7 @@ class Device:
     def __init__(self, channel, devnum):
         self.channel = channel
         self.devnum = devnum
-        self._features = {Feature.ROOT: 0}
+        self.features = {Feature.ROOT: 0}
 
     def ping(self):
         """Return the HID++ protocol version (major, minor)."""
@@ -344,10 +346,10 @@ class Device:
 
     def index(self, feature):
         """Return the feature's index, or None when unsupported."""
-        if feature not in self._features:
+        if feature not in self.features:
             data = self.call(Feature.ROOT, 0x0, struct.pack("!H", feature))
-            self._features[feature] = data[0] or None
-        return self._features[feature]
+            self.features[feature] = data[0] or None
+        return self.features[feature]
 
     def call(self, feature, func, params=b""):
         idx = self.index(feature)
@@ -365,10 +367,10 @@ class Device:
             name += chunk[: count - len(name)]
         return name.decode(errors="replace")
 
-    def divert(self, cids, on=True):
+    def divert(self, control_ids, on=True):
         """setCidReporting: divert bit plus its valid bit (0x02), no remap."""
-        for cid in cids:
-            self.call(Feature.REPROG, Reprog.SET_REPORTING, struct.pack("!HBH", cid, 0x03 if on else 0x02, 0))
+        for control_id in control_ids:
+            self.call(Feature.REPROG, Reprog.SET_REPORTING, struct.pack("!HBH", control_id, 0x03 if on else 0x02, 0))
 
     def fn_lock(self):
         """Return True when the F keys give their media function without Fn, or None if unsupported."""
@@ -389,8 +391,8 @@ class Device:
                 return ", ".join(name for bit, name in Platform.OS if os_flags & bit) or f"platform {current}"
         return f"platform {current}"
 
-    def listen(self, cids, on_key, stop, on_fn_lock=None):
-        """Divert cids and call on_key(cid, pressed, fn) until the stop Event is set.
+    def listen(self, control_ids, on_key, stop, on_fn_lock=None):
+        """Divert control_ids and call on_key(control_id, pressed, fn) until the stop Event is set.
 
         fn tells whether Fn was held. on_fn_lock(state) is called when the user toggles Fn lock.
         Blocking; run it in a thread. Re-diverts after a reconnect and undoes the divert on exit.
@@ -404,8 +406,8 @@ class Device:
             # have the receiver report link up/down (0x41), as Solaar does
             flags = ch.register(Receiver.NOTIFICATIONS)
             ch.register(Receiver.NOTIFICATIONS, flags | Receiver.WIRELESS | Receiver.SOFTWARE)
-        self.divert(cids)
-        log.info("diverted %s", ", ".join(Reprog.NAMES.get(c, f"{c:#06x}") for c in cids))
+        self.divert(control_ids)
+        log.info("diverted %s", ", ".join(Reprog.NAMES.get(control_id, f"{control_id:#06x}") for control_id in control_ids))
         diverted = time.monotonic()
         down = ()
         fn_held = False
@@ -420,13 +422,13 @@ class Device:
                     if fn != fn_held:
                         log.info("Fn %s", "down" if fn else "up")
                         fn_held = fn
-                    now = tuple(c for c in held if c in cids)
-                    for cid in now:
-                        if cid not in down:
-                            on_key(cid, True, fn)
-                    for cid in down:
-                        if cid not in now:
-                            on_key(cid, False, fn)
+                    now = tuple(control_id for control_id in held if control_id in control_ids)
+                    for control_id in now:
+                        if control_id not in down:
+                            on_key(control_id, True, fn)
+                    for control_id in down:
+                        if control_id not in now:
+                            on_key(control_id, False, fn)
                     down = now
                     continue
                 if r[2] == lock and r[3] == 0x00:
@@ -447,7 +449,7 @@ class Device:
                 if time.monotonic() - diverted > self.DEBOUNCE:
                     for attempt in range(1, 4):
                         try:
-                            self.divert(cids)
+                            self.divert(control_ids)
                             log.info("re-diverted")
                             break
                         except (Error, TimeoutError) as e:
@@ -456,7 +458,7 @@ class Device:
                     diverted = time.monotonic()
         finally:
             try:
-                self.divert(cids, False)
+                self.divert(control_ids, False)
                 log.info("divert removed")
             except (Error, TimeoutError) as e:
                 log.warning("could not undo the divert (%s); power-cycling the device resets it", e)
@@ -470,7 +472,7 @@ def find(match):
 
     The returned channel stays open; close it when done.
     """
-    for path, _pid, product in Channel.enumerate():
+    for path, pid, product in Channel.enumerate():
         try:
             ch = Channel(path, product)
         except OSError as e:

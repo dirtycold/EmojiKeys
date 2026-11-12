@@ -35,7 +35,7 @@ KEYS = {
 
 
 @functools.cache
-def _lib():
+def lib():
     """Load CoreGraphics and CoreFoundation once."""
     c = ctypes
     cg = c.cdll.LoadLibrary("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics")
@@ -53,8 +53,8 @@ def _lib():
     return cg, cf
 
 
-def _post(keycode, down, flags, units=None):
-    cg, cf = _lib()
+def post(keycode, down, flags, units=None):
+    cg, cf = lib()
     event = cg.CGEventCreateKeyboardEvent(None, keycode, down)
     if not event:
         raise OSError("CGEventCreateKeyboardEvent failed")
@@ -68,7 +68,7 @@ def _post(keycode, down, flags, units=None):
 
 def trusted(prompt=False):
     """Return whether this process may post input events; prompt=True shows the system dialog."""
-    cg, _cf = _lib()
+    cg, cf = lib()
     return cg.CGRequestPostEventAccess() if prompt else cg.CGPreflightPostEventAccess()
 
 
@@ -78,13 +78,13 @@ def write(text):
     for ch in text:
         units = list(memoryview(ch.encode("utf-16-le")).cast("H"))
         if len(chunk) + len(units) > CHUNK:
-            _post(0, True, 0, chunk)
-            _post(0, False, 0, chunk)
+            post(0, True, 0, chunk)
+            post(0, False, 0, chunk)
             chunk = []
         chunk += units
     if chunk:
-        _post(0, True, 0, chunk)
-        _post(0, False, 0, chunk)
+        post(0, True, 0, chunk)
+        post(0, False, 0, chunk)
 
 
 class Combo:
@@ -102,5 +102,5 @@ class Combo:
             self.flags |= MODIFIERS[m]
 
     def press(self):
-        _post(self.keycode, True, self.flags)
-        _post(self.keycode, False, self.flags)
+        post(self.keycode, True, self.flags)
+        post(self.keycode, False, self.flags)

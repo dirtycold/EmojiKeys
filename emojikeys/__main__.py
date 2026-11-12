@@ -43,7 +43,7 @@ class Command:
                     except OSError as e:
                         print(f"  {e}")
                         break
-        print(f"hidapi: {hidpp.library()._name}")
+        print(f"hidapi: {hidpp.library().name}")
 
     def probe(self):
         def flags(value, table):
@@ -62,14 +62,15 @@ class Command:
             rows = []
             for i in range(count):
                 info = dev.call(hidpp.Feature.REPROG, hidpp.Reprog.GET_INFO, bytes([i]))
-                cid, tid, f1, _pos, group, gmask, f2 = struct.unpack("!HHBBBBB", info[:9])
-                rep = dev.call(hidpp.Feature.REPROG, hidpp.Reprog.GET_REPORTING, struct.pack("!H", cid))
-                _cid, m1, remap, m2 = struct.unpack("!HBHB", rep[:6])
+                control_id, task_id, f1, pos, group, gmask, f2 = struct.unpack("!HHBBBBB", info[:9])
+                rep = dev.call(hidpp.Feature.REPROG, hidpp.Reprog.GET_REPORTING, struct.pack("!H", control_id))
+                # skip the control ID repeated in bytes 0-1
+                m1, remap, m2 = struct.unpack("!2xBHB", rep[:6])
                 rows.append((
-                    f"{i:2} {cid:#06x} {tid:#06x} {group:3} {gmask:#04x}  {remap:#06x}",
+                    f"{i:2} {control_id:#06x} {task_id:#06x} {group:3} {gmask:#04x}  {remap:#06x}",
                     flags(f1 | f2 << 8, hidpp.Reprog.KEY_FLAGS),
                     flags(m1 | m2 << 8, hidpp.Reprog.MAP_FLAGS),
-                    hidpp.Reprog.NAMES.get(cid, ""),
+                    hidpp.Reprog.NAMES.get(control_id, ""),
                 ))
             # size the flag columns to their longest entry
             kw = max(len("key flags"), *(len(r[1]) for r in rows))
@@ -99,9 +100,9 @@ class Command:
                 print(f"Fn lock: media keys on {media[lock]}")
             dev.listen(
                 hidpp.Reprog.MAPPABLE,
-                lambda cid, pressed, fn: print(
+                lambda control_id, pressed, fn: print(
                     f"{time.strftime('%H:%M:%S')} {'press  ' if pressed else 'release'} "
-                    f"{'Fn+' if fn else ''}{hidpp.Reprog.NAMES[cid]}"
+                    f"{'Fn+' if fn else ''}{hidpp.Reprog.NAMES[control_id]}"
                 ),
                 threading.Event(),
                 lambda state: print(f"{time.strftime('%H:%M:%S')} Fn lock: media keys on {media[state]}"),

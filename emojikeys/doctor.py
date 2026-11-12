@@ -85,7 +85,7 @@ def check():
             ok = False
 
     try:
-        print(f"hidapi: {hidpp.library()._name}")
+        print(f"hidapi: {hidpp.library().name}")
         devices = hidpp.Channel.enumerate()
     except OSError as e:
         print(f"hidapi/discovery: {e}")

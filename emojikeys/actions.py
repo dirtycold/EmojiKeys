@@ -80,29 +80,29 @@ class Run:
 
 
 class Keymap:
-    """Prepared actions by (cid, fn); set() swaps in a new mapping with one assignment."""
+    """Prepared actions by (control_id, fn); set() swaps in a new mapping with one assignment."""
 
     def __init__(self, config, copy=None):
         """copy(text) puts text on the clipboard where it can't be typed (the UI passes clipboard.Clipboard)."""
         self.kinds = {"type": lambda text: Type(text, copy), "run": Run}
-        self._actions = {}
+        self.actions = {}
         self.set(config)
 
     def set(self, config):
         """Prepare every action of config; raises on a bad one and keeps the old mapping."""
-        self._actions = {key: self.kinds[action.type](action.value) for key, action in config.keys.items()}
+        self.actions = {key: self.kinds[action.type](action.value) for key, action in config.keys.items()}
 
     @property
-    def cids(self):
+    def control_ids(self):
         """Control IDs that have a mapping, i.e. the ones to divert."""
-        return tuple(sorted({cid for cid, _fn in self._actions}))
+        return tuple(sorted({control_id for control_id, fn in self.actions}))
 
-    def press(self, cid, fn):
+    def press(self, control_id, fn):
         # F keys only ever report their task, so they are mapped as Fn+key whatever Fn shows
-        fire = self._actions.get((cid, fn or cid in Reprog.FKEYS))
+        fire = self.actions.get((control_id, fn or control_id in Reprog.FKEYS))
         if fire is None:
             return
         try:
             fire()
         except Exception as e:
-            log.warning("action for %s failed: %s", Reprog.NAMES.get(cid, f"{cid:#06x}"), e)
+            log.warning("action for %s failed: %s", Reprog.NAMES.get(control_id, f"{control_id:#06x}"), e)
