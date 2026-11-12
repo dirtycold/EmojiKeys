@@ -10,11 +10,16 @@ log = logging.getLogger(__name__)
 
 
 class Type:
-    """Type text; {combo} presses keys, {{ and }} are literal braces. Parsed once."""
+    """Type text; {combo} presses keys, {{ and }} are literal braces. Parsed once.
 
-    def __init__(self, text):
-        if not inject.SUPPORTED:
-            raise NotImplementedError("type actions are not supported yet on this OS")
+    Without input simulation (Linux, or macOS without Accessibility) the text is copied
+    to the clipboard with copy(text) for the user to paste, and combos are skipped.
+    The UI passes clipboard.Clipboard; without copy nothing is copied.
+    """
+
+    def __init__(self, text, copy=None):
+        self.copy = copy
+        # str for text, Combo for keys (None where input simulation is unsupported)
         self.steps = []
         buf, i = "", 0
         while i < len(text):
@@ -28,7 +33,7 @@ class Type:
                 if buf:
                     self.steps.append(buf)
                     buf = ""
-                self.steps.append(inject.Combo(text[i + 1 : end]))
+                self.steps.append(inject.Combo(text[i + 1 : end]) if inject.SUPPORTED else None)
                 i = end + 1
             elif text[i] == "}":
                 raise ValueError(f"unmatched }} in {text!r}; write }}}} for a literal brace")
@@ -37,13 +42,24 @@ class Type:
                 i += 1
         if buf:
             self.steps.append(buf)
+        self.text = "".join(step for step in self.steps if isinstance(step, str))
+        self.combos = any(not isinstance(step, str) for step in self.steps)
 
     def __call__(self):
-        for step in self.steps:
-            if isinstance(step, str):
-                inject.write(step)
-            else:
-                step.press()
+        # checked on each press: Accessibility may be granted while we run
+        if inject.trusted():
+            for step in self.steps:
+                if isinstance(step, str):
+                    inject.write(step)
+                else:
+                    step.press()
+        elif self.text and self.copy:
+            self.copy(self.text)
+            log.info("no input simulation: copied the text to the clipboard%s", ", skipped key combos" if self.combos else "")
+        elif self.text:
+            log.warning("no input simulation and no clipboard; text not typed")
+        else:
+            log.warning("key combos need input simulation (Accessibility on macOS); skipped")
 
 
 class Run:
@@ -66,15 +82,15 @@ class Run:
 class Keymap:
     """Prepared actions by (cid, fn); set() swaps in a new mapping with one assignment."""
 
-    KINDS = {"type": Type, "run": Run}
-
-    def __init__(self, config):
+    def __init__(self, config, copy=None):
+        """copy(text) puts text on the clipboard where it can't be typed (the UI passes clipboard.Clipboard)."""
+        self.kinds = {"type": lambda text: Type(text, copy), "run": Run}
         self._actions = {}
         self.set(config)
 
     def set(self, config):
         """Prepare every action of config; raises on a bad one and keeps the old mapping."""
-        self._actions = {key: self.KINDS[action.type](action.value) for key, action in config.keys.items()}
+        self._actions = {key: self.kinds[action.type](action.value) for key, action in config.keys.items()}
 
     @property
     def cids(self):

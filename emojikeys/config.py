@@ -3,6 +3,7 @@
 import dataclasses
 import json
 import os
+import shutil
 import sys
 from pathlib import Path
 
@@ -49,15 +50,26 @@ class Config:
 
     @classmethod
     def default(cls):
-        # emoji after Solaar's key names, in control ID order
-        return cls({
+        # emoji after Solaar's key names, in control ID order; copied to the clipboard where they can't be typed
+        keys = {
             (0x0104, False): Action("type", "😍"),
             (0x0105, False): Action("type", "😢"),
             (0x0106, False): Action("type", "😊"),
             (0x0107, False): Action("type", "😂"),
-            (0x0108, False): Action("type", "{ctrl+cmd+space}"),
-            (0x0103, False): Action("run", "open -a Screenshot"),
-        })
+        }
+        if sys.platform == "darwin":
+            keys[(0x0108, False)] = Action("type", "{ctrl+cmd+space}")
+            keys[(0x0103, False)] = Action("run", "open -a Screenshot")
+            return cls(keys)
+        # emoji picker and screenshot tool: the first one installed (KDE, then GNOME), else unmapped
+        for cid, commands in (
+            (0x0108, ("plasma-emojier", "gnome-characters")),
+            (0x0103, ("spectacle", "gnome-screenshot --interactive")),
+        ):
+            command = next((c for c in commands if shutil.which(c.split()[0])), None)
+            if command:
+                keys[(cid, False)] = Action("run", command)
+        return cls(keys)
 
     @classmethod
     def load(cls, path=None):

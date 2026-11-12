@@ -3,7 +3,7 @@
 import sys
 from pathlib import Path
 
-from . import hidpp, inject
+from . import actions, hidpp, inject
 from .config import Config
 
 
@@ -22,15 +22,29 @@ def check():
         print(f"Config: {e}")
         ok = False
 
-    needs_type = config is not None and any(action.type == "type" for action in config.keys.values())
+    # keys whose type action holds key combos, which can't fall back to the clipboard
+    needs_type, combo_keys = False, []
+    if config is not None:
+        for name, key in Config.names().items():
+            action = config.keys.get(key)
+            if action is None or action.type != "type":
+                continue
+            needs_type = True
+            try:
+                if actions.Type(action.value).combos:
+                    combo_keys.append(name)
+            except (OSError, ValueError) as e:
+                print(f"Config: key {name!r}: {e}")
+                ok = False
     if sys.platform == "darwin":
         if needs_type:
             # Preflight checks without prompting:
             # https://developer.apple.com/documentation/coregraphics/cgpreflightposteventaccess()
             try:
                 trusted = inject.trusted()
-                print(f"Accessibility: {'granted' if trusted else 'required for type actions'}")
-                if not trusted:
+                print(f"Accessibility: {'granted' if trusted else 'not granted; type actions copy their text to the clipboard'}")
+                if not trusted and combo_keys:
+                    print(f"  Key combos need it: {', '.join(combo_keys)}.")
                     print("  Enable this terminal or app in System Settings > Privacy & Security > Accessibility.")
                     ok = False
             except OSError as e:
@@ -42,9 +56,9 @@ def check():
             print("Accessibility: requirement unknown until config is valid")
         print("Bluetooth: not checked; discovery currently supports receivers only")
     elif sys.platform == "linux":
-        print("Input simulation: not supported yet on Linux")
-        if needs_type:
-            print("  Config has type actions; use run actions on Linux.")
+        print("Input simulation: not supported yet on Linux; type actions copy their text to the clipboard")
+        if combo_keys:
+            print(f"  Key combos do nothing on Linux: {', '.join(combo_keys)}; use run actions.")
             ok = False
         # Rule files are evidence of installation, not proof of the active permissions.
         # https://www.freedesktop.org/software/systemd/man/latest/udev.html
@@ -55,6 +69,20 @@ def check():
     else:
         print(f"OS: {sys.platform} is not supported")
         ok = False
+
+    # the copy fallback of type actions; used whenever text can't be typed
+    if needs_type:
+        try:
+            from . import clipboard
+
+            how = clipboard.method()
+            print(f"Clipboard: {how or 'none'}{' (Wayland)' if clipboard.wayland() else ''}")
+            if how is None:
+                print("  Without Klipper, Wayland needs wl-clipboard (wl-copy) for type actions to copy.")
+                ok = False
+        except ImportError as e:
+            print(f"Clipboard: needs qtpy and a Qt binding ({e})")
+            ok = False
 
     try:
         print(f"hidapi: {hidpp.library()._name}")

@@ -19,7 +19,8 @@ emojikeys/
   __main__.py      no args: UI app; list / probe / doctor: CLI
   hidpp.py         Channel, Device, divert, listener thread
   config.py        Action and Config dataclasses, JSON load/save
-  actions.py       prepare and fire actions: type, run (Keymap)
+  actions.py       prepare and fire actions: type (else copy), run (Keymap)
+  clipboard.py     copy fallback (Qt, UI only): Klipper over QtDBus, wl-copy or QClipboard
   inject/macos.py  CoreGraphics: type text, key combos, Accessibility check
   doctor.py        checks; --fix installs the udev rule, prompts Accessibility
   ui.py            tray app, single instance
@@ -41,19 +42,20 @@ Files:
 | 3 | `inject/macos.py` | a one-liner types an emoji and sends ⌃⌘Space |
 | 4 | `actions.py` | one-liner per action type |
 | 5 | `doctor.py` | `python3 -m emojikeys doctor` reports deps and permissions |
+| 5.5 | `doctor.py --fix` | installs the udev rule (Linux) or prompts for Accessibility (macOS); `doctor` passes afterwards without Solaar's rule |
 | 6 | `ui.py` | keys work end to end; second launch brings up the first; `monitor` refuses while the app runs (same PID-file lock) |
 
 Mappable keys: F4–F12, Dictation, Emoji 1–4, Emoji panel. Only mapped keys are diverted. F1–F3 are Easy-Switch and not divertable.
 
 Config keys: `Emoji 1` and `Fn+Emoji 1` (likewise Dictation, Emoji panel) are separate mappings. F keys are named `Fn+F4` … `Fn+F12` only and fire whatever Fn shows, since only their task is ever reported.
 
-Actions: `type` types text, with `{combo}` for keys (`{ctrl+cmd+space}`, `hi{return}`; `{{` and `}}` are literal braces). `run` runs a shell command without waiting; apps are `open -a "Name"`, which the UI offers through an app picker. Actions fire on press; release is ignored.
+Actions: `type` types text, with `{combo}` for keys (`{ctrl+cmd+space}`, `hi{return}`; `{{` and `}}` are literal braces). `run` runs a shell command without waiting; apps are `open -a "Name"`, which the UI offers through an app picker. Actions fire on press; release is ignored. Without input simulation (Linux for now, or macOS without Accessibility) `type` copies its text to the clipboard for the user to paste and skips its combos; there is no separate `copy` action. Checked on each press, so granting Accessibility takes effect at once.
 
 On an F key only its task (media function) is diverted, whichever combo produces it under the current Fn-lock mode; the plain F key still reaches the system. Verified 2026-11-09 with F12: plain F12 reached the terminal, Fn+F12 arrived as a divert event (Fn 0x0034 held) and the volume didn't change.
 
 The UI shows each key's stock function (from its task ID, our own labels) and the Fn-lock state, so the user knows whether the media function is F-key or Fn+F-key. Fn-lock is feature 0x40A3 (index 11 on POP Keys): read fn0 at start (per host, current host from HOSTS_INFO 0x1815), and event 0 reports each toggle as [host, state, 01, 01] with state 01 = media keys without Fn. Seen 2026-11-09 while toggling with Fn+Esc.
 
-Default mapping: the four emoji keys type their emoji, the panel key sends ⌃⌘Space (emoji picker), Dictation opens Screenshot.app. The F keys are unmapped, so they keep their normal function.
+Default mapping: the four emoji keys type their emoji (copied where they can't be typed). macOS: the panel key sends ⌃⌘Space (emoji picker), Dictation opens Screenshot.app. Linux: the panel key and Dictation run the first installed of `plasma-emojier` / `gnome-characters` and `spectacle` / `gnome-screenshot --interactive`, else stay unmapped. The F keys are unmapped, so they keep their normal function.
 
 ## Requirements (to document in the README)
 
@@ -61,14 +63,26 @@ Default mapping: the four emoji keys type their emoji, the panel key sends ⌃�
 |---|---|---|
 | hidapi | MacPorts `hidapi`, else Homebrew `hidapi` | system package (`libhidapi-hidraw0` / `hidapi`) |
 | Device access | none | udev rule: Logitech (`046d`) hidraw nodes of the HID++ interface only, `TAG+="uaccess"` (a `uinput` line only if Linux input simulation is added). If Solaar's rule is installed it grants all Logitech hidraw nodes anyway; `doctor` says so |
-| Key injection | Accessibility for the app process | not supported yet (reserved) |
+| Key injection | Accessibility for the app process; without it text is copied | not supported yet (reserved); text is copied |
 | UI | qtpy + a Qt binding | same, Flatpak preferred |
+| Copy fallback | Qt (`QClipboard`) | Qt: X11 `QClipboard`, KDE Wayland Klipper over QtDBus; other Wayland desktops need `wl-copy` (wl-clipboard) |
 
 ## Input injection
 
-macOS: typing text and key combos both post CoreGraphics events and need only Accessibility; nothing is deferred. Verified 2026-11-10 in iTerm2 with no permissions, on a second POP Keys and Bolt receiver: `list`, `probe`, `monitor` and `run` actions work; `type` actions do nothing, silently, so `doctor` must check `trusted()`. Accessibility is asked for only when needed: the config has a `type` action (in the UI, when one is picked) or the keyboard is on Bluetooth. Never at startup otherwise; without either, `doctor` reports it as not needed. Input Monitoring is never asked for. The grant follows the process (the terminal while run from one; a `.app` bundle later). Secure input (password fields, Terminal's Secure Keyboard Entry) may block synthetic events by design. `doctor` uses `CGPreflightPostEventAccess` / `CGRequestPostEventAccess`.
+macOS: typing text and key combos both post CoreGraphics events and need only Accessibility; nothing is deferred. Verified 2026-11-10 in iTerm2 with no permissions, on a second POP Keys and Bolt receiver: `list`, `probe`, `monitor` and `run` actions work; `type` actions did nothing, silently; now they copy their text instead. Accessibility is asked for only when needed: a `type` action has key combos (in the UI, when one is picked), the user wants text typed rather than copied, or the keyboard is on Bluetooth. Never at startup otherwise; without either, `doctor` reports it as not needed. Input Monitoring is never asked for. The grant follows the process (the terminal while run from one; a `.app` bundle later). Secure input (password fields, Terminal's Secure Keyboard Entry) may block synthetic events by design. `doctor` uses `CGPreflightPostEventAccess` / `CGRequestPostEventAccess`.
 
-Linux: input simulation is not supported yet (reserved). `text` and `keys` actions report "not supported yet on Linux"; `app`, `run` and the user's own scripts cover the rest. `/dev/uinput` is one node and can't be scoped; write access lets any process of the user type into any app (injection, not reading). Options, to decide if it's ever added:
+Linux: input simulation is not supported yet (reserved). `type` actions copy their text to the clipboard and skip key combos (`doctor` names the keys with combos); `run` and the user's own scripts cover the rest. Copying is Qt, in the UI (`clipboard.py`, detected once at startup): `QClipboard` on macOS and X11; on Wayland Klipper's D-Bus `setClipboardContents` through QtDBus, else `wl-copy`, the one non-Qt fallback (GNOME, wlroots); `doctor` names the one found. Wayland limit, verified 2026-11-12 on KDE Plasma (KWin, PyQt6 6.12), a random marker checked through Klipper:
+
+| Qt platform | how | clipboard set |
+|---|---|---|
+| `wayland` | no window, tray icon, or own window just shown | no |
+| `wayland` | own window, in the handler of a real click | yes |
+| `wayland` | Klipper's D-Bus `setClipboardContents` through QtDBus, no focus | yes |
+| `xcb` (XWayland) | no window, tray icon or window, no focus | yes (KWin bridges it) |
+
+A Wayland client may set the selection only right after its own input event, and the key arrives over hidraw, not as one; clipboard managers get the data-control protocol instead (KWin, wlroots; not Mutter). So `QClipboard` can't serve the fallback on Wayland, and the UI is never moved to `xcb`. Checked 2026-11-12: an emoji key's text, fired from the listener thread, reached the clipboard through Klipper over QtDBus. `wl-copy` and GNOME are untested. Flatpak: Klipper over QtDBus needs only `--talk-name=org.kde.klipper`; `wl-copy` would have to be bundled.
+
+libei alone can't replace the fallback (checked 2026-11-12): it gets its connection from the RemoteDesktop portal (KWin's own `org.kde.KWin.EIS.RemoteDesktop.connectToEIS` is private and skips the user's approval), sends key codes through the compositor's keymap, so it can't type emoji outside the layout, and has no clipboard. It could add key combos and paste-after-copy (Ctrl+V, Ctrl+Shift+V in terminals); wlroots has no EIS, `wtype` (virtual-keyboard) types emoji there.
 
 | Way | Scope | Cost |
 |---|---|---|
@@ -103,6 +117,6 @@ Linux without any permission granted:
   - `monitor` echoed the keys it doesn't divert (plain F12, Insert, Delete, Home, End, Page Up/Down), which also stayed in the tty for the shell. It now runs with echo off and flushes pending input on exit, like the pass-through test; checked on 2026-11-12.
 - Linux input simulation, `inject/linux.py` (WIP, reserved: uinput, XTest or portal; see Input injection).
 - Key repeat: the keyboard reports only press and release for diverted keys (no repeats; Solaar's Backspace mapping didn't repeat either). An opt-in `repeat` for `type` actions would run our own timer while the key is held, using macOS's repeat delay and rate. Never for `run`, which would launch many times.
-- `copy` action: put text (e.g. an emoji) on the clipboard for the user to paste; no input simulation, so it fits Linux too.
+- Flatpak: `shutil.which` and `run` commands see the sandbox, not the host; the Linux defaults and `run` would need `flatpak-spawn --host`.
 - Bluetooth (vendor page 0xFF43, devnum 0xFF). macOS (tested 2026-11-10): over Bluetooth all of the keyboard's interfaces, typing included, are one device, and opening it needs Input Monitoring or Accessibility (macOS prompts for Input Monitoring; works after grant and restart; Ghostty, which has Accessibility, opened it without). Bluetooth is a nice-to-have, not required. On macOS it is supported only through Accessibility: the tool never asks for Input Monitoring, which is too broad. Caveat, verified 2026-11-10: the Bluetooth keyboard is one device, so its typing reports (ID 0x01, 8 bytes, press and release) reach our process too. Our code must drop every non-HID++ report on arrival, before logging or queueing, so the guarantee is our code, as with `type` actions. Also found: HID++ over Bluetooth takes long reports only, and the Bluetooth host keeps its own OS mode and Fn lock. Linux: cover BlueZ too (hidraw over bus 0005; the udev rule must match Bluetooth nodes, e.g. `KERNELS=="0005:046D:*"`).
 - `.app` bundle on macOS, so Accessibility is granted to the app alone.
