@@ -5,7 +5,7 @@ Run from the repo root, with Solaar quit. Paste the output back.
 1. hidapi and the Logitech hidraw nodes (bus 0003 = USB, 0005 = Bluetooth) with their permissions:
 
 ```
-ldconfig -p | grep hidapi; for n in /sys/class/hidraw/hidraw*; do grep -qi 046d $n/device/uevent && echo "$(ls -l /dev/${n##*/}) $(grep -h HID_NAME $n/device/uevent)"; done; ls /etc/udev/rules.d /usr/lib/udev/rules.d 2>/dev/null | grep -i logitech
+/sbin/ldconfig -p | grep hidapi; for n in /sys/class/hidraw/hidraw*; do grep -qi 046d $n/device/uevent && echo "$(ls -l /dev/${n##*/}) $(grep -h HID_NAME $n/device/uevent) $(readlink -f $n)"; done; ls /etc/udev/rules.d /usr/lib/udev/rules.d 2>/dev/null | grep -i logitech
 ```
 
 2. Receivers, devices and the POP Keys controls:

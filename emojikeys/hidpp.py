@@ -5,7 +5,9 @@ import ctypes
 import functools
 import logging
 import struct
+import sys
 import time
+from pathlib import Path
 
 log = logging.getLogger(__name__)
 
@@ -242,6 +244,19 @@ class Channel:
         while node:
             info = node.contents
             if info.usage_page == USAGE_PAGE and info.path not in found:
+                if sys.platform == "linux":
+                    # sysfs hierarchy: https://docs.kernel.org/admin-guide/sysfs-rules.html
+                    # Resolve the hidraw class link, then identify ancestors by subsystem.
+                    # A paired-device node is nested beneath its receiver's HID device;
+                    # scan the receiver instead. Confirm this topology in the Linux check.
+                    device = Path("/sys/class/hidraw") / Path(info.path.decode()).name
+                    device = device.resolve(strict=True)
+                    hid_parents = sum(
+                        (parent / "subsystem").resolve().name == "hid" for parent in device.parents
+                    )
+                    if hid_parents > 1:
+                        node = info.next
+                        continue
                 found[info.path] = (info.path, info.product_id, info.product_string or "?")
             node = info.next
         lib.hid_free_enumeration(head)

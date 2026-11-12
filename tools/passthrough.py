@@ -20,12 +20,14 @@ while node:
     i = node.contents
     # 0xff00 via a receiver, 0xff43 via Bluetooth
     if i.usage_page in (0xFF00, 0xFF43):
-        paths.append((i.path, i.usage_page, i.product_string or "?"))
+        # Field meanings: https://libusb.info/hidapi/structhid__device__info.html
+        paths.append((i.path, i.product_id, i.usage_page, i.product_string or "?"))
     node = i.next
 lib.hid_free_enumeration(head)
 
 buf = ctypes.create_string_buffer(64)
-for path, page, product in paths:
+for path, pid, page, product in paths:
+    print(f"{pid:04x} {product} {page:#06x} [{path.decode()}]", flush=True)
     handle = lib.hid_open_path(path)
     if not handle:
         print(f"{product} {page:#06x}: cannot open")
