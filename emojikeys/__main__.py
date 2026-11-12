@@ -7,7 +7,7 @@ import sys
 import threading
 import time
 
-from . import hidpp
+from . import hidpp, terminal
 
 
 class Command:
@@ -86,10 +86,11 @@ class Command:
         if not found:
             sys.exit(f"no reachable device matching {self.args.match!r} (tap a key to wake it, then retry)")
         ch, dev, name = found
-        print(f"#{dev.devnum} {name}: diverting all mappable keys; press keys, Ctrl-C to stop")
+        print(f"#{dev.devnum} {name}: diverting all mappable keys; press keys (other keys are not echoed), Ctrl-C to stop")
         # Fn lock state -> where the media functions are
         media = {True: "F-key alone", False: "Fn+F-key"}
-        with ch:
+        # keys that aren't diverted still type; keep them out of the shell
+        with ch, terminal.quiet():
             mode = dev.platform()
             if mode is not None:
                 print(f"OS mode: {mode}")
