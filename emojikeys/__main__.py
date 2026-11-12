@@ -40,6 +40,9 @@ class Command:
                     except hidpp.Error as e:
                         if e.code != hidpp.Receiver.UNKNOWN or self.args.verbose:
                             print(f"  #{devnum:<3} {e}")
+                    except OSError as e:
+                        print(f"  {e}")
+                        break
         print(f"hidapi: {hidpp.library()._name}")
 
     def probe(self):

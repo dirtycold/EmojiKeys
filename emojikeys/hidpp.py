@@ -218,6 +218,7 @@ class Channel:
     """One open HID++ interface: a receiver or a directly attached device."""
 
     def __init__(self, path, product=""):
+        self.path = path.decode()
         self.product = product
         # unsolicited reports read while waiting for a reply
         self._pending = collections.deque(maxlen=64)
@@ -226,7 +227,7 @@ class Channel:
         self._lib = library()
         self._handle = self._lib.hid_open_path(path)
         if not self._handle:
-            raise OSError(f"cannot open {path.decode()}")
+            raise OSError(f"cannot open {self.path}")
 
     def __enter__(self):
         return self
@@ -276,7 +277,7 @@ class Channel:
         """Return the next HID++ report, or b"" on timeout or when a non-HID++ report was dropped."""
         n = self._lib.hid_read_timeout(self._handle, self._buf, len(self._buf), timeout_ms)
         if n < 0:
-            raise OSError(f"hid_read: {self._lib.hid_error(self._handle)}")
+            raise OSError(f"hid_read {self.path}: {self._lib.hid_error(self._handle)}")
         # never read keystrokes: anything but HID++ (e.g. typing over Bluetooth) is dropped here, before logging or queueing
         if n == 0 or self._buf[0][0] not in Report.SIZES:
             return b""
@@ -299,7 +300,11 @@ class Channel:
         buf = bytes([rid, devnum]) + data.ljust(Report.SIZES[rid] - 2, b"\0")
         log.debug(">> %s", buf.hex(" "))
         if self._lib.hid_write(self._handle, buf, len(buf)) < 0:
-            raise OSError(f"hid_write: {self._lib.hid_error(self._handle)}")
+            # a USB receiver may stall a write once (Linux: "Broken pipe", seen 2026-11-12); retry once
+            log.warning("hid_write %s: %s; retrying", self.path, self._lib.hid_error(self._handle))
+            time.sleep(0.1)
+            if self._lib.hid_write(self._handle, buf, len(buf)) < 0:
+                raise OSError(f"hid_write {self.path}: {self._lib.hid_error(self._handle)}")
         deadline = time.monotonic() + timeout
         while (left := deadline - time.monotonic()) > 0:
             r = self.read(int(left * 1000) + 1)
@@ -478,6 +483,10 @@ def find(match):
                 name = dev.name()
             except (Error, TimeoutError):
                 continue
+            except OSError as e:
+                # one failing receiver must not hide a device on another
+                log.warning("%s: %s", product, e)
+                break
             if match.lower() in name.lower():
                 return ch, dev, name
         ch.close()
