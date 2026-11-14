@@ -37,10 +37,7 @@ def method():
 
 
 class Clipboard(QObject):
-    """Callable as copy(text) from any thread; the copy itself runs on the GUI thread.
-
-    How to copy is detected once, at creation (after the QApplication).
-    """
+    """copy(text) from any thread; the copy runs on the GUI thread, by the method detected at creation."""
 
     requested = Signal(str)
 
@@ -48,6 +45,10 @@ class Clipboard(QObject):
         super().__init__(parent)
         self.how = method()
         log.info("clipboard: %s", self.how or "none")
+        if self.how == "klipper":
+            from qtpy.QtDBus import QDBusConnection, QDBusInterface
+
+            self.klipper = QDBusInterface(KLIPPER, "/klipper", "org.kde.klipper.klipper", QDBusConnection.sessionBus())
         # queued when emitted from the listener thread
         self.requested.connect(self.copy)
 
@@ -59,22 +60,12 @@ class Clipboard(QObject):
         # an exception escaping a slot aborts PyQt6
         try:
             if self.how == "klipper":
-                from qtpy.QtDBus import QDBusConnection, QDBusInterface, QDBusMessage
-
-                klipper = QDBusInterface(KLIPPER, "/klipper", "org.kde.klipper.klipper", QDBusConnection.sessionBus())
-                reply = klipper.call("setClipboardContents", text)
-                if reply.type() == QDBusMessage.MessageType.ErrorMessage:
+                reply = self.klipper.call("setClipboardContents", text)
+                if reply.errorMessage():
                     raise OSError(f"Klipper: {reply.errorMessage()}")
             elif self.how == "wl-copy":
                 # wl-copy forks and keeps serving the text after we return
-                subprocess.run(
-                    ["wl-copy"],
-                    input=text.encode(),
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    check=True,
-                    timeout=2,
-                )
+                subprocess.run(["wl-copy"], input=text.encode(), check=True, timeout=2)
             elif self.how == "qt":
                 QGuiApplication.clipboard().setText(text)
             else:
