@@ -19,7 +19,7 @@ class Command:
     def doctor(self):
         from . import doctor
 
-        sys.exit(0 if doctor.check() else 1)
+        sys.exit(0 if doctor.check(self.args.fix) else 1)
 
     def list(self):
         for path, pid, product in hidpp.Channel.enumerate():
@@ -114,7 +114,8 @@ def main():
     parser.add_argument("-v", "--verbose", action="store_true", help="also log raw HID++ traffic")
     sub = parser.add_subparsers(dest="cmd", required=True)
     sub.add_parser("list", help="list receivers and paired devices")
-    sub.add_parser("doctor", help="check dependencies, config and device access without changing settings")
+    cmd = sub.add_parser("doctor", help="check dependencies, config and device access; read-only without --fix")
+    cmd.add_argument("--fix", action="store_true", help="install what's missing: the udev rule (asks for root) or Accessibility")
     for name, help_text in (
         ("probe", "dump REPROG_CONTROLS_V4 controls"),
         ("monitor", "divert the mappable keys and print presses until Ctrl-C (testing only)"),

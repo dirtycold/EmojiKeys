@@ -8,7 +8,8 @@ Use the emoji keys of the Logitech POP Keys on macOS and Linux with a small Pyth
 - One UI app owns the receiver. The HID++ listener runs in a thread inside it. Never a daemon.
 - Single instance: a PID file held with `fcntl.flock`. A second launch sends `SIGUSR1` to the running app, which shows its window (`signal.set_wakeup_fd` + `QSocketNotifier`), then exits. No QtNetwork.
 - JSON is the saved format only. At runtime the library and UI share dataclasses. Actions are resolved once; the runner swaps the key mapping in one assignment.
-- CLI is read-only: `list`, `probe`, `doctor`. Exception: `monitor`, a testing tool that diverts the mappable keys and prints presses until Ctrl-C.
+- CLI is read-only: `list`, `probe`, `doctor`. Exceptions: `monitor`, a testing tool that diverts the mappable keys and prints presses until Ctrl-C, and `doctor --fix`.
+- Never runs as root. The one step that needs root (`doctor --fix` writing the udev rule) asks for it: `sudo` when run from a terminal, else a polkit dialog (`pkexec`), as Flatpak does.
 - No dependency on Solaar being installed: own udev rule and docs.
 - Never read keystrokes. The tool opens only the HID++ interface, which carries the reprogrammable controls, Fn and status, never typing. Any feature that would need to read typing is dropped. So modifier keys are not supported; mappings tell key from Fn+key only (Fn comes over HID++). macOS enforces this only while the app has no Accessibility, i.e. with `run` actions alone: Accessibility, which `type` actions need, also lets a process read input (event taps, opening the keyboard). With Accessibility the guarantee is our code. Linux: the udev rule grants only the HID++ hidraw nodes. Typing on the POP Keys via Bolt reached none of them (`tools/passthrough.py`, 2026-11-12: the c548 and c52b receiver nodes and the M325 node saw nothing). Untested: a keyboard on a receiver in DJ mode (none at hand; the driver may forward typing to the receiver node) and Bluetooth (likely one node). Our code drops such reports unread either way.
 
@@ -62,7 +63,7 @@ Default mapping: the four emoji keys type their emoji (copied where they can't b
 | | macOS | Linux |
 |---|---|---|
 | hidapi | MacPorts `hidapi`, else Homebrew `hidapi` | system package (`libhidapi-hidraw0` / `hidapi`) |
-| Device access | none | udev rule: Logitech (`046d`) hidraw nodes of the HID++ interface only, `TAG+="uaccess"` (a `uinput` line only if Linux input simulation is added). If Solaar's rule is installed it grants all Logitech hidraw nodes anyway; `doctor` says so |
+| Device access | none | udev rule `/etc/udev/rules.d/70-emojikeys.rules`: the HID++ interface of each receiver present, matched by sysfs path, `TAG+="uaccess"` (a `uinput` line only if Linux input simulation is added). If Solaar's rule is installed it grants all Logitech hidraw nodes anyway; `doctor` says so |
 | Key injection | Accessibility for the app process; without it text is copied | not supported yet (reserved); text is copied |
 | UI | qtpy + a Qt binding | same, Flatpak preferred |
 | Copy fallback | Qt (`QClipboard`) | Qt: X11 `QClipboard`, KDE Wayland Klipper over QtDBus; other Wayland desktops need `wl-copy` (wl-clipboard) |
@@ -100,7 +101,9 @@ Linux without any permission granted:
 | HID++ hidraw rule only | diversion and all events (keys, Fn, Fn lock, OS mode); `app` and `run` actions; text as clipboard copy (Qt in the UI) for the user to paste; on X11 also text and combos via XTest |
 | plus `/dev/uinput` or the portal | text and key combos on Wayland too |
 
-`doctor --fix`: installs the udev rule with `pkexec` (prints the `sudo` command as fallback, print-only inside Flatpak), reloads udev, then asks to replug the receiver. Never loads kernel modules or installs packages; it prints those commands.
+`doctor --fix`: our rule is the last resort. `doctor` first opens each receiver; if another rule already grants access (Solaar's, which its Flatpak also asks users to copy to `/etc`), ours is reported as not needed and nothing is installed. Otherwise, or to keep an installed rule of ours current, it writes the udev rule as root (`sudo` in a terminal, else `pkexec`; inside Flatpak, or when either fails, it prints the commands to run by hand), then reloads udev and triggers the hidraw nodes, so no replug is needed. On macOS it shows the Accessibility prompt when a `type` action exists and it isn't granted. Never loads kernel modules or installs packages; it prints those commands.
+
+The rule is generated from the receivers present: one line per receiver, `DEVPATH=="*:<config>.<interface>/0003:046D:<product>.????/hidraw/hidraw*"`. The `.????` stops right before `/hidraw`, so a paired device's node beneath the receiver (logitech-dj) doesn't match, nor do the receiver's other interfaces, which carry typing. A new receiver needs `doctor --fix` again; `doctor` reports a rule that differs from the receivers present. Checked 2026-11-14 against this machine's nodes (only the c52b and c548 HID++ interfaces match) and with `udevadm verify`. USB only; Bluetooth comes later.
 
 ## Later
 
