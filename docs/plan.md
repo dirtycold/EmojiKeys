@@ -24,7 +24,8 @@ emojikeys/
   clipboard.py     copy fallback (Qt, UI only): Klipper over QtDBus, wl-copy or QClipboard
   inject/macos.py  CoreGraphics: type text, key combos, Accessibility check
   doctor.py        checks; --fix installs the udev rule, prompts Accessibility
-  ui.py            tray app, single instance
+  instance.py      PID-file lock: one app; monitor refuses while it runs
+  ui.py            tray app, keyboard thread, mapping editor
 ```
 
 Files:
@@ -53,6 +54,10 @@ Config keys: `Emoji 1` and `Fn+Emoji 1` (likewise Dictation, Emoji panel) are se
 Actions: `type` types text, with `{combo}` for keys (`{ctrl+cmd+space}`, `hi{return}`; `{{` and `}}` are literal braces). `run` runs a shell command without waiting; apps are `open -a "Name"`, which the UI offers through an app picker. Actions fire on press; release is ignored. Without input simulation (Linux for now, or macOS without Accessibility) `type` copies its text to the clipboard for the user to paste and skips its combos; there is no separate `copy` action. Checked on each press, so granting Accessibility takes effect at once.
 
 On an F key only its task (media function) is diverted, whichever combo produces it under the current Fn-lock mode; the plain F key still reaches the system. Verified 2026-11-09 with F12: plain F12 reached the terminal, Fn+F12 arrived as a divert event (Fn 0x0034 held) and the volume didn't change.
+
+The UI: a tray icon and one small window. Two rows of keycaps (Dictation, Emoji 1–4, Emoji panel; then F4–F12, always listed), no keyboard layout. Each keycap shows its mapping, or the F key's stock function. Below them, the selected key's two mappings, one row each: the key alone and with Fn (F keys: the Fn row only). A row has Off / Type / Run, the value, and Shortcut… (captures a combo with `QKeySequenceEdit`, appended as `{combo}`; macOS only, since Linux can't press combos yet), App… (macOS: a file dialog on /Applications, giving `open -a "Name"`; Linux: a filterable list of the `.desktop` apps, giving their `Exec` without field codes) and Test (Run: starts it and shows the exit code and first error line after a second; Type: copies only, since typing would land in our window). Edits save at once. While the window is open every mappable key is diverted and a press selects its keycap instead of firing; closing it diverts only mapped keys again. Key sequences as triggers (press A then B) are out: key and Fn+key only; sequences of keys as output are `{a}{b}`.
+
+Keyboards: POP Keys only for now (`ui.MATCH`, `Reprog.MAPPABLE`). Other Logitech keyboards with dictation/emoji keys (MX Keys S, Pebble Keys 2, Keys-To-Go 2, POP Icon Keys; unverified) would need the keys read from the device (REPROG_CONTROLS_V4 getCidInfo, divertable flag, as `probe` does) instead of the fixed list, and names for their control IDs.
 
 The UI shows each key's stock function (from its task ID, our own labels) and the Fn-lock state, so the user knows whether the media function is F-key or Fn+F-key. Fn-lock is feature 0x40A3 (index 11 on POP Keys): read fn0 at start (per host, current host from HOSTS_INFO 0x1815), and event 0 reports each toggle as [host, state, 01, 01] with state 01 = media keys without Fn. Seen 2026-11-09 while toggling with Fn+Esc.
 
@@ -107,7 +112,7 @@ The rule is generated from the receivers present: one line per receiver, `DEVPAT
 
 ## Later
 
-- Mapping editor in the UI.
+- App picker: the platform's own (KDE's application chooser, a native dialog on macOS) or any executable, instead of our `.desktop` list.
 - OS mode: show and change the keyboard's OS mode (MULTIPLATFORM 0x4531), with a description of what it changes. On POP Keys the choices are Windows 0, macOS 1, iOS 2. fn0 byte 6 is the current mode, and fn3 `[0xFF, platform]` sets it for the current host; the keyboard shortcuts are Fn+P (Windows) and Fn+O (macOS) held about 3 s, and the F1 light flashes on a switch. The mode explains surprises: in Windows mode on a Mac, the task keys send Windows shortcuts (Fn+F4 Win+D gave ∂, Fn+F5 Win+Shift+S gave Í, Fn+F6 did nothing), and Command and Option/Control land differently. Media keys (F7-F12) work in any mode. Phase 1 assumes Windows mode, with keys assigned by hand. The mode is shared when one dongle is moved between machines with a hardware switch.
 - Linux fixes, from the first test (2026-11-10, openSUSE, Solaar's rule installed; hidapi loads, access works, the POP Keys answers on its Bolt receiver c548 and `probe` reads all 20 controls):
   - The receiver driver adds a hidraw node per paired device (here the M325, pid 0x4094), which hidapi reports as "USB Receiver". We pinged its six slots, 5 × 4 s = 20 s, so `list`, `probe` and `monitor` paused and `monitor` never started diverting. Fix: open only receivers (pid 0xC5xx) and Bluetooth HID++ (0xFF43); paired devices stay reachable through their receiver.

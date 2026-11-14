@@ -1,4 +1,4 @@
-"""CLI: list receivers and devices, probe a device's controls, monitor key presses."""
+"""EmojiKeys: with no command, the tray app; else the CLI to list receivers, probe controls, monitor keys."""
 
 import argparse
 import logging
@@ -7,7 +7,7 @@ import sys
 import threading
 import time
 
-from . import hidpp, terminal
+from . import hidpp, instance, terminal
 
 
 class Command:
@@ -83,6 +83,10 @@ class Command:
                 print(f"  {ids} {key_flags:{kw}} {map_flags:{mw}} {cid_name}".rstrip())
 
     def monitor(self):
+        # the app owns the keys while it runs; held until we exit
+        lock = instance.acquire()
+        if lock is None:
+            sys.exit("the EmojiKeys app is running and owns the keys; quit it first")
         found = hidpp.find(self.args.match)
         if not found:
             sys.exit(f"no reachable device matching {self.args.match!r} (tap a key to wake it, then retry)")
@@ -112,7 +116,7 @@ class Command:
 def main():
     parser = argparse.ArgumentParser(prog="emojikeys", description=__doc__)
     parser.add_argument("-v", "--verbose", action="store_true", help="also log raw HID++ traffic")
-    sub = parser.add_subparsers(dest="cmd", required=True)
+    sub = parser.add_subparsers(dest="cmd")
     sub.add_parser("list", help="list receivers and paired devices")
     cmd = sub.add_parser("doctor", help="check dependencies, config and device access; read-only without --fix")
     cmd.add_argument("--fix", action="store_true", help="install what's missing: the udev rule (asks for root) or Accessibility")
@@ -126,6 +130,10 @@ def main():
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO, format="%(asctime)s %(message)s", datefmt="%H:%M:%S"
     )
+    if args.cmd is None:
+        from . import ui
+
+        return ui.main()
     try:
         getattr(Command(args), args.cmd)()
     except KeyboardInterrupt:
